@@ -33,42 +33,36 @@ def extract_case_number(title: str) -> str:
     match = re.search(r"[A-Z]{1,3}\s?[A-Z]?\s?\d+/\d{2}", title)
     return match.group(0) if match else "Unbekannt"
 
-def find_pdf_link(detail_url):
+def sanitize_filename(name: str) -> str:
+    """Entfernt unzulässige Zeichen aus Dateinamen"""
+    return "".join(c if c.isalnum() or c in ("_", "-", ".") else "_" for c in name)
+
+def find_pdf_link(detail_url: str) -> str | None:
     """Extrahiert den PDF-Link von der Detailseite einer BFH-Entscheidung"""
     r = requests.get(detail_url)
     r.raise_for_status()
     soup = BeautifulSoup(r.text, "html.parser")
 
-    pdf_link = None
     for a in soup.find_all("a", href=True):
         href = a["href"]
-        if "/detail/pdf/" in href:  # <- neue BFH-Logik
-            pdf_link = href
-            if not pdf_link.startswith("http"):
-                pdf_link = "https://www.bundesfinanzhof.de" + pdf_link
-            break
+        if "/detail/pdf/" in href:  # neue BFH-Logik
+            if not href.startswith("http"):
+                href = "https://www.bundesfinanzhof.de" + href
+            return href
+    return None
 
-    return pdf_link
-
-def sanitize_filename(name: str) -> str:
-    """Entfernt unzulässige Zeichen aus Dateinamen"""
-    return "".join(c if c.isalnum() or c in ("_", "-", ".") else "_" for c in name)
-
-def download_pdf(pdf_link, aktenzeichen, folder="downloads"):
+def download_pdf(pdf_link: str, aktenzeichen: str, folder="downloads"):
     """Speichert die PDF-Datei lokal mit dem Aktenzeichen im Namen"""
     os.makedirs(folder, exist_ok=True)
     response = requests.get(pdf_link)
     response.raise_for_status()
 
-    # Dateiname aus Aktenzeichen + Datum
     clean_az = sanitize_filename(aktenzeichen)
     basename = f"{clean_az}_{datetime.now().strftime('%Y%m%d')}.pdf"
-
     filename = os.path.join(folder, basename)
+
     with open(filename, "wb") as f:
         f.write(response.content)
-
-    print(f"✅ PDF gespeichert: {filename}")
     return filename
 
 def extract_text_from_pdf(path: str) -> str:
@@ -141,20 +135,14 @@ def create_weekly_pdf(summaries, filename):
     story.append(Paragraph("<b>Zusammenfassungen der Entscheidungen</b>", styles["Heading1"]))
     story.append(Spacer(1, 20))
 
-    if summaries:
-        for entry in summaries:
-            case_number = extract_case_number(entry['title'])
-            story.append(Paragraph(f"<b>{case_number} – {entry['title']}</b>", styles["Heading2"]))
-            story.append(Paragraph(f"Veröffentlicht: {entry['published']}", styles["Normal"]))
-            story.append(Paragraph(f"Link: <a href='{entry['link']}'>{entry['link']}</a>", styles["Normal"]))
-            story.append(Spacer(1, 10))
-            story.append(Paragraph(entry["summary"], styles["Normal"]))
-            story.append(Spacer(1, 20))
-    else:
-        story.append(Paragraph(
-        "Diese Woche wurden keine neuen Entscheidungen veröffentlicht.",
-        styles["Normal"]
-    ))
+    for entry in summaries:
+        case_number = extract_case_number(entry['title'])
+        story.append(Paragraph(f"<b>{case_number} – {entry['title']}</b>", styles["Heading2"]))
+        story.append(Paragraph(f"Veröffentlicht: {entry['published']}", styles["Normal"]))
+        story.append(Paragraph(f"Link: <a href='{entry['link']}'>{entry['link']}</a>", styles["Normal"]))
+        story.append(Spacer(1, 10))
+        story.append(Paragraph(entry["summary"], styles["Normal"]))
+        story.append(Spacer(1, 20))
 
     # ---- Technischer Hinweis ----
     story.append(PageBreak())
@@ -183,27 +171,26 @@ def main():
 
     summaries = []
     for entry in feed.entries:
-        title = entry.title.strip()
-        link = entry.link
-        published = entry.get("published", "unbekannt")
-
-        # Aktenzeichen steht meistens im Titel
-        aktenzeichen = title.split(":")[0].strip() if ":" in title else title
-
-        print(f"\n📌 Entscheidung: {title}")
-        print(f"   Link: {link}")
-        print(f"   Aktenzeichen: {aktenzeichen}")
-        print(f"   Veröffentlichungsdatum: {published}")
-
-        # PDF-Link von der Detailseite holen
-        pdf_link = find_pdf_link(link)
+        case_number = extract_case_number(entry.title)
+        pdf_link = find_pdf_link(entry.link)
         if not pdf_link:
-            print(f"⚠️ Kein PDF-Link gefunden für {link}")
+            print(f"⚠️ Kein PDF-Link gefunden für {entry.link}")
             continue
 
-        # PDF speichern
-        download_pdf(pdf_link, aktenzeichen)
+        pdf_path = download_pdf(pdf_link, case_number)
+        text = extract_text_from_pdf(pdf_path)
+        summary = summarize_text(text)
 
+        summaries.append({
+            "title": entry.title,
+            "published": entry.published,
+            "link": entry.link,
+            "summary": summary,
+        })
+
+    os.makedirs("weekly_reports", exist_ok=True)
+    filename = f"weekly_reports/BFH_Entscheidungen_KW{datetime.now().isocalendar()[1]}_{datetime.now().year}.pdf"
+    create_weekly_pdf(summaries, filename)
 
 if __name__ == "__main__":
     main()
