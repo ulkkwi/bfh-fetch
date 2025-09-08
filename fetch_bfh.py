@@ -183,15 +183,16 @@ def main():
     if not pdf_link:
         print(f"⚠️ Kein PDF-Link gefunden für {entry.link}")
     continue
-        pdf_path = download_pdf(pdf_link, aktenzeichen)
-        text = extract_text_from_pdf(pdf_path)
-        summary = summarize_text(text)
+        
+    pdf_path = download_pdf(pdf_link, aktenzeichen)
+    text = extract_text_from_pdf(pdf_path)
+    summary = summarize_text(text)
 
-        summaries.append({
-            "title": entry.title,
-            "published": entry.published,
-            "link": entry.link,
-            "summary": summary,
+    summaries.append({
+        "title": entry.title,
+        "published": entry.published,
+        "link": entry.link,
+        "summary": summary,
         })
 
     os.makedirs("weekly_reports", exist_ok=True)
