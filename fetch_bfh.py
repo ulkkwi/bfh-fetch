@@ -69,19 +69,28 @@ def extract_text_from_pdf(path: str) -> str:
 # -------------------
 # KI-Zusammenfassung mit Debug + Fallback
 # -------------------
-def call_openai(model: str, prompt: str, max_tokens: int) -> str:
+def call_openai(model: str, prompt: str, max_tokens: int = 500) -> str:
     try:
+        # Debug: Länge des Prompts
+        print(f"📝 Prompt-Länge: {len(prompt)} Zeichen")
+
         response = client.chat.completions.create(
             model=model,
             messages=[
                 {
                     "role": "system",
-                    "content": "Fasse folgenden Abschnitt einer BFH-Entscheidung präzise auf Deutsch zusammen."
+                    "content": (
+                        "Du bist ein juristischer Assistent. "
+                        "Fasse den folgenden Abschnitt einer BFH-Entscheidung in maximal 5 Sätzen narrativ zusammen. "
+                        "Vermeide Gesetzeszitate und Paragraphenangaben. "
+                        "Die Antwort soll klar und verständlich für Steuerberater:innen formuliert sein."
+                    ),
                 },
                 {"role": "user", "content": prompt},
             ],
-            max_completion_tokens=max_tokens,
+            max_completion_tokens=max_tokens,  # jetzt höher (500 statt 150)
         )
+
         if (
             response.choices
             and response.choices[0].message
@@ -89,6 +98,7 @@ def call_openai(model: str, prompt: str, max_tokens: int) -> str:
         ):
             content = response.choices[0].message.content.strip()
             print(f"🔎 Preview ({model}): {content[:200]}...")
+            print(f"📏 Antwort-Länge: {len(content)} Zeichen")
             return content
         else:
             print(f"⚠️ Modell {model} hat keine verwertbare Antwort geliefert.")
