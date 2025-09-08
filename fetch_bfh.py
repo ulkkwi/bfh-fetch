@@ -174,30 +174,36 @@ def create_weekly_pdf(summaries, filename):
 # Hauptlogik
 # -------------------
 def main():
-    FEED_URL = "https://www.bundesfinanzhof.de/de/precedent.rss"  # BFH RSS
+    FEED_URL = "https://www.bundesfinanzhof.de/de/entscheidung/entscheidungen-online/?rss=1"
+
     feed = feedparser.parse(FEED_URL)
 
-    summaries = []
+    if not feed.entries:
+        print("⚠️ Keine neuen Entscheidungen im RSS-Feed gefunden.")
+        return
+
     for entry in feed.entries:
-        pdf_link = find_pdf_link(entry.link)
-    if not pdf_link:
-        print(f"⚠️ Kein PDF-Link gefunden für {entry.link}")
-        continue
-        
-    pdf_path = download_pdf(pdf_link, aktenzeichen)
-    text = extract_text_from_pdf(pdf_path)
-    summary = summarize_text(text)
+        title = entry.title.strip()
+        link = entry.link
+        published = entry.get("published", "unbekannt")
 
-    summaries.append({
-        "title": entry.title,
-        "published": entry.published,
-        "link": entry.link,
-        "summary": summary,
-        })
+        # Aktenzeichen steht meistens im Titel
+        aktenzeichen = title.split(":")[0].strip() if ":" in title else title
 
-    os.makedirs("weekly_reports", exist_ok=True)
-    filename = f"weekly_reports/BFH_Entscheidungen_KW{datetime.now().isocalendar()[1]}_{datetime.now().year}.pdf"
-    create_weekly_pdf(summaries, filename)
+        print(f"\n📌 Entscheidung: {title}")
+        print(f"   Link: {link}")
+        print(f"   Aktenzeichen: {aktenzeichen}")
+        print(f"   Veröffentlichungsdatum: {published}")
+
+        # PDF-Link von der Detailseite holen
+        pdf_link = find_pdf_link(link)
+        if not pdf_link:
+            print(f"⚠️ Kein PDF-Link gefunden für {link}")
+            continue
+
+        # PDF speichern
+        download_pdf(pdf_link, aktenzeichen)
+
 
 if __name__ == "__main__":
     main()
