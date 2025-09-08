@@ -179,6 +179,7 @@ def main():
 
         pdf_path = download_pdf(pdf_link, case_number)
         text = extract_text_from_pdf(pdf_path)
+        print(f"📄 {os.path.basename(path)} – Länge extrahierter Text: {len(text)} Zeichen")
         summary = summarize_text(text)
 
         summaries.append({
