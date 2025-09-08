@@ -18,6 +18,7 @@ import locale
 # -------------------
 client = OpenAI()
 DEFAULT_MODEL = os.getenv("MODEL", "gpt-5-nano")
+TEST_MODE = os.getenv("TEST_MODE") == "1"
 
 PRICES = {
     "gpt-5-nano": {"input": 0.05, "output": 0.40},
