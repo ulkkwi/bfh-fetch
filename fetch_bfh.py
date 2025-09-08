@@ -67,7 +67,7 @@ def extract_text_from_pdf(path: str) -> str:
     return text
 
 # -------------------
-# KI-Zusammenfassung mit Debug
+# KI-Zusammenfassung mit Debug + Fallback
 # -------------------
 def call_openai(model: str, prompt: str, max_tokens: int) -> str:
     try:
@@ -80,7 +80,7 @@ def call_openai(model: str, prompt: str, max_tokens: int) -> str:
                 },
                 {"role": "user", "content": prompt},
             ],
-            max_output_tokens=max_tokens,
+            max_completion_tokens=max_tokens,
         )
         if (
             response.choices
@@ -103,14 +103,21 @@ def summarize_text(text: str) -> tuple[str, str]:
     chunks = [text[i:i+max_chunk_size] for i in range(0, len(text), max_chunk_size)]
     partial_summaries = []
     model_used = DEFAULT_MODEL
-    print(f"➡️ Verwende Modell: {model_used}")
+    print(f"➡️ Vorgesehenes Modell: {model_used}")
+
+    # Falls der Nutzer explizit gpt-5 wählt → keine Fallback-Logik
+    if model_used == "gpt-5":
+        print("⚠️ Achtung: Großes Modell gpt-5 wird direkt verwendet (manuell gewählt).")
 
     for idx, chunk in enumerate(chunks, 1):
         summary = call_openai(model_used, chunk, 150)
+
+        # Fallback: Nano → Mini
         if not summary and model_used == "gpt-5-nano":
             print("⚠️ Nano liefert nichts – wechsle zu gpt-5-mini")
             model_used = "gpt-5-mini"
             summary = call_openai(model_used, chunk, 150)
+
         if summary:
             print(f"✅ Chunk {idx}: {len(summary)} Zeichen Summary")
             partial_summaries.append(summary)
@@ -186,6 +193,29 @@ def create_weekly_pdf(summaries, filename, model_used: str):
     story.append(Spacer(1, 10))
     story.append(Paragraph(f"Vorgesehenes Modell: <b>{DEFAULT_MODEL}</b>", styles["Normal"]))
     story.append(Paragraph(f"Tatsächlich verwendetes Modell: <b>{model_used}</b>", styles["Normal"]))
+
+    # 👉 Fallback-Hinweise
+    if DEFAULT_MODEL == "gpt-5-nano" and model_used == "gpt-5-mini":
+        story.append(Spacer(1, 10))
+        story.append(Paragraph(
+            "⚠️ Hinweis: Einige Zusammenfassungen konnten mit gpt-5-nano nicht erstellt werden "
+            "und wurden daher mit gpt-5-mini nachbearbeitet.",
+            styles["Normal"]
+        ))
+    elif model_used == "gpt-5":
+        story.append(Spacer(1, 10))
+        story.append(Paragraph(
+            "⚠️ Hinweis: Großes Modell gpt-5 wurde manuell genutzt. "
+            "Dies verursacht höhere Kosten.",
+            styles["Normal"]
+        ))
+    else:
+        story.append(Spacer(1, 10))
+        story.append(Paragraph(
+            "Alle Zusammenfassungen wurden erfolgreich mit dem vorgesehenen Modell erstellt.",
+            styles["Normal"]
+        ))
+
     est_cost = estimate_cost(len(summaries), model_used)
     story.append(Spacer(1, 10))
     story.append(Paragraph(f"Geschätzte API-Kosten (mit {model_used}): ca. {est_cost} USD pro Woche.", styles["Normal"]))
