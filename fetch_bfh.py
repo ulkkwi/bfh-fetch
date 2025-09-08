@@ -144,7 +144,7 @@ def create_weekly_pdf(summaries, filename):
 # Hauptlogik
 # -------------------
 def main():
-    FEED_URL = "https://www.bundesfinanzhof.de/de/entscheidung/feed.rss"  # BFH RSS
+    FEED_URL = "https://www.bundesfinanzhof.de/de/precedent.rss"  # BFH RSS
     feed = feedparser.parse(FEED_URL)
 
     summaries = []
