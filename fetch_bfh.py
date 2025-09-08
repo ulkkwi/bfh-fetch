@@ -182,7 +182,7 @@ def main():
         pdf_link = find_pdf_link(entry.link)
     if not pdf_link:
         print(f"⚠️ Kein PDF-Link gefunden für {entry.link}")
-    continue
+        continue
         
     pdf_path = download_pdf(pdf_link, aktenzeichen)
     text = extract_text_from_pdf(pdf_path)
