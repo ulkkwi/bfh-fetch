@@ -17,7 +17,7 @@ Optional wird das Wochen-PDF **automatisch per E-Mail** versendet (SMTP).
 ---
 
 ## 📂 Struktur
-.
+.\
 ├─ .github/workflows/fetch_bfh.yml # CI-Workflow: wöchentlicher Lauf + Mailversand\
 ├─ fetch_bfh.py # Hauptskript\
 ├─ requirements.txt # Dependencies\
