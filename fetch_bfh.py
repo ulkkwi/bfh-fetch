@@ -67,7 +67,7 @@ def extract_text_from_pdf(path: str) -> str:
     return text
 
 # -------------------
-# KI-Zusammenfassung mit Fallback
+# KI-Zusammenfassung mit Debug
 # -------------------
 def call_openai(model: str, prompt: str, max_tokens: int) -> str:
     try:
@@ -80,16 +80,19 @@ def call_openai(model: str, prompt: str, max_tokens: int) -> str:
                 },
                 {"role": "user", "content": prompt},
             ],
-            max_output_tokens=max_tokens,  # ✅ richtiger Parameter
+            max_output_tokens=max_tokens,
         )
         if (
             response.choices
             and response.choices[0].message
             and response.choices[0].message.content
         ):
-            return response.choices[0].message.content.strip()
+            content = response.choices[0].message.content.strip()
+            print(f"🔎 Preview ({model}): {content[:200]}...")
+            return content
         else:
             print(f"⚠️ Modell {model} hat keine verwertbare Antwort geliefert.")
+            print("🔎 API-Rohantwort:", response)
     except Exception as e:
         print(f"⚠️ Fehler mit Modell {model}: {e}")
     return ""
@@ -218,7 +221,7 @@ def main():
         text = extract_text_from_pdf(pdf_path)
         print(f"📄 {os.path.basename(pdf_path)} – Länge extrahierter Text: {len(text)} Zeichen")
         summary, model_used = summarize_text(text)
-        model_used_final = model_used  # letztes tatsächlich genutztes Modell
+        model_used_final = model_used
         summaries.append({
             "title": entry.title,
             "published": entry.published,
