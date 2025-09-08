@@ -74,21 +74,46 @@ def extract_text_from_pdf(path: str) -> str:
     return text
 
 def summarize_text(text: str) -> str:
+    # ---- Schritt 1: Text in Absätze teilen ----
+    paragraphs = text.split("\n\n")
+    chunks = []
+    current = ""
+
+    for para in paragraphs:
+        if len(current) + len(para) > 4000:
+            chunks.append(current.strip())
+            current = para
+        else:
+            current += "\n\n" + para
+    if current:
+        chunks.append(current.strip())
+
+    partial_summaries = []
+
+    # ---- Schritt 2: Abschnitte einzeln zusammenfassen ----
+    for idx, chunk in enumerate(chunks, 1):
+        response = client.chat.completions.create(
+            model=DEFAULT_MODEL,
+            messages=[
+                {"role": "system", "content": "Fasse diesen Teil einer BFH-Entscheidung präzise auf Deutsch zusammen."},
+                {"role": "user", "content": chunk},
+            ],
+            max_completion_tokens=300,
+        )
+        summary = response.choices[0].message.content.strip()
+        partial_summaries.append(f"Teil {idx}: {summary}")
+
+    # ---- Schritt 3: Gesamtsynthese ----
+    combined_text = "\n\n".join(partial_summaries)
     response = client.chat.completions.create(
         model=DEFAULT_MODEL,
         messages=[
-            {
-                "role": "system",
-                "content": (
-                    "Du bist ein juristischer Assistent. "
-                    "Fasse die BFH-Entscheidung in 2 Absätzen narrativ zusammen. "
-                    "Vermeide Gesetzeszitate und Fußnoten. "
-                    "Erkläre den Kern der Entscheidung verständlich für Steuerberater:innen."
-                ),
-            },
-            {"role": "user", "content": text},
+            {"role": "system", "content": "Du bist ein juristischer Assistent. "
+                                          "Fasse die gesamte BFH-Entscheidung narrativ in 2 Absätzen zusammen. "
+                                          "Vermeide Fußnoten und Gesetzeszitate."},
+            {"role": "user", "content": combined_text},
         ],
-        max_completion_tokens=500,
+        max_completion_tokens=400,
     )
     return response.choices[0].message.content.strip()
 
@@ -137,8 +162,6 @@ def create_weekly_pdf(summaries, filename):
 
     for entry in summaries:
         case_number = extract_case_number(entry['title'])
-
-        # Wenn das Aktenzeichen schon im Titel steckt → nicht doppelt ausgeben
         if case_number in entry['title']:
             heading = entry['title']
         else:
