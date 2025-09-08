@@ -2,14 +2,16 @@ import os
 import re
 import requests
 import feedparser
+import locale
 from datetime import datetime, date
 from bs4 import BeautifulSoup
 from PyPDF2 import PdfReader
 from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak, Table, TableStyle
 from reportlab.lib import colors
 from reportlab.lib.units import cm
+from reportlab.lib.enums import TA_JUSTIFY
 from openai import OpenAI
 
 # -------------------
@@ -19,7 +21,13 @@ client = OpenAI()
 DEFAULT_MODEL = os.getenv("MODEL", "gpt-5-nano")
 TEST_MODE = os.getenv("TEST_MODE") == "1"
 
-# Preise pro 1M Tokens (USD) – Stand 2025
+# deutsche Locale für Datumsformat
+try:
+    locale.setlocale(locale.LC_TIME, "de_DE.UTF-8")
+except locale.Error:
+    # Fallback, falls Locale auf System nicht vorhanden
+    pass
+
 PRICES = {
     "gpt-5-nano": {"input": 0.05, "output": 0.40},
     "gpt-5-mini": {"input": 0.25, "output": 2.00},
@@ -30,7 +38,6 @@ PRICES = {
 # Hilfsfunktionen
 # -------------------
 def extract_case_number(title: str) -> str:
-    """Extrahiert das Aktenzeichen (z. B. VI R 4/23) aus dem Titel"""
     match = re.search(r"[A-Z]{1,3}\s?[A-Z]?\s?\d+/\d{2}", title)
     return match.group(0) if match else "Unbekannt"
 
@@ -54,26 +61,24 @@ def extract_text_from_pdf(path: str) -> str:
 # -------------------
 # OpenAI Anbindung
 # -------------------
-def call_openai(model: str, prompt: str, max_tokens: int = 1000) -> str:
+def call_openai(model: str, prompt: str, max_tokens: int = 800) -> str:
     try:
         print(f"📝 Prompt-Länge: {len(prompt)} Zeichen")
-
         response = client.chat.completions.create(
             model=model,
             messages=[
                 {
                     "role": "system",
                     "content": (
-                        "Fasse den folgenden Text kurz auf Deutsch zusammen. "
-                        "Antworte immer mit einer verständlichen Zusammenfassung, "
-                        "kein 'keine Antwort' und keine Auslassungen."
+                        "Fasse den folgenden Abschnitt sehr kurz in 2–3 Sätzen zusammen. "
+                        "Vermeide Stichpunkte, Überschriften und die Wörter 'Zusammenfassung' oder 'Kurzfassung'. "
+                        "Schreibe klar und verständlich auf Deutsch."
                     ),
                 },
                 {"role": "user", "content": prompt},
             ],
             max_completion_tokens=max_tokens,
         )
-
         if (
             response.choices
             and response.choices[0].message
@@ -103,7 +108,14 @@ def summarize_text(text: str) -> str:
         summaries.append(summary or "⚠️ Keine Antwort erhalten")
         print(f"✅ Chunk {idx}: {len(summaries[-1])} Zeichen Summary")
 
-    return "\n\n".join(summaries)
+    # Finale Gesamtsumme aus allen Chunk-Summaries
+    combined = "\n".join(summaries)
+    final = call_openai(
+        DEFAULT_MODEL,
+        f"Fasse die folgenden Teilsummen in höchstens 2 Absätzen narrativ zusammen:\n{combined}",
+        500,
+    )
+    return final or combined
 
 # -------------------
 # Kosten
@@ -115,8 +127,7 @@ def estimate_cost(num_decisions: int, model: str) -> float:
     output_tokens = num_decisions * 1000
     price_in = PRICES[model]["input"] / 1_000_000
     price_out = PRICES[model]["output"] / 1_000_000
-    cost = input_tokens * price_in + output_tokens * price_out
-    return round(cost, 4)
+    return round(input_tokens * price_in + output_tokens * price_out, 4)
 
 # -------------------
 # PDF Bericht
@@ -124,8 +135,17 @@ def estimate_cost(num_decisions: int, model: str) -> float:
 def create_weekly_pdf(summaries, filename):
     doc = SimpleDocTemplate(filename, pagesize=A4)
     styles = getSampleStyleSheet()
-    story = []
 
+    # eigener deutscher Absatzstil
+    styles.add(ParagraphStyle(
+        name="German",
+        parent=styles["Normal"],
+        alignment=TA_JUSTIFY,
+        leading=14,
+        spaceAfter=10,
+    ))
+
+    story = []
     today = date.today()
     year, week, _ = datetime.now().isocalendar()
 
@@ -138,7 +158,7 @@ def create_weekly_pdf(summaries, filename):
 
     data = [
         ["Kalenderwoche:", f"{week} / {year}"],
-        ["Erstellt am:", today.strftime("%d.%m.%Y")],
+        ["Erstellt am:", today.strftime("%d. %B %Y")],
     ]
     table = Table(data, colWidths=[5*cm, 10*cm])
     table.setStyle(TableStyle([
@@ -159,9 +179,10 @@ def create_weekly_pdf(summaries, filename):
         story.append(Paragraph(f"Veröffentlicht: {entry['published']}", styles["Normal"]))
         story.append(Paragraph(f"Link: <a href='{entry['link']}'>{entry['link']}</a>", styles["Normal"]))
         story.append(Spacer(1, 10))
-        story.append(Paragraph(entry["summary"], styles["Normal"]))
+        story.append(Paragraph(entry["summary"], styles["German"]))
         story.append(Spacer(1, 20))
 
+    # Hinweise
     story.append(PageBreak())
     story.append(Paragraph("<b>Technische Hinweise</b>", styles["Heading1"]))
     story.append(Spacer(1, 10))
