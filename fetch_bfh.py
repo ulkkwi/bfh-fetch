@@ -111,14 +111,20 @@ def create_weekly_pdf(summaries, filename):
     story.append(Paragraph("<b>Zusammenfassungen der Entscheidungen</b>", styles["Heading1"]))
     story.append(Spacer(1, 20))
 
-    for entry in summaries:
-        case_number = extract_case_number(entry['title'])
-        story.append(Paragraph(f"<b>{case_number} – {entry['title']}</b>", styles["Heading2"]))
-        story.append(Paragraph(f"Veröffentlicht: {entry['published']}", styles["Normal"]))
-        story.append(Paragraph(f"Link: <a href='{entry['link']}'>{entry['link']}</a>", styles["Normal"]))
-        story.append(Spacer(1, 10))
-        story.append(Paragraph(entry["summary"], styles["Normal"]))
-        story.append(Spacer(1, 20))
+    if summaries:
+        for entry in summaries:
+            case_number = extract_case_number(entry['title'])
+            story.append(Paragraph(f"<b>{case_number} – {entry['title']}</b>", styles["Heading2"]))
+            story.append(Paragraph(f"Veröffentlicht: {entry['published']}", styles["Normal"]))
+            story.append(Paragraph(f"Link: <a href='{entry['link']}'>{entry['link']}</a>", styles["Normal"]))
+            story.append(Spacer(1, 10))
+            story.append(Paragraph(entry["summary"], styles["Normal"]))
+            story.append(Spacer(1, 20))
+    else:
+        story.append(Paragraph(
+        "Diese Woche wurden keine neuen Entscheidungen veröffentlicht.",
+        styles["Normal"]
+    ))
 
     # ---- Technischer Hinweis ----
     story.append(PageBreak())
