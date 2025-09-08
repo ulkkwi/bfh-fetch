@@ -74,13 +74,22 @@ def call_openai(model: str, prompt: str, max_tokens: int) -> str:
         response = client.chat.completions.create(
             model=model,
             messages=[
-                {"role": "system", "content": "Fasse folgenden Abschnitt einer BFH-Entscheidung präzise auf Deutsch zusammen."},
+                {
+                    "role": "system",
+                    "content": "Fasse folgenden Abschnitt einer BFH-Entscheidung präzise auf Deutsch zusammen."
+                },
                 {"role": "user", "content": prompt},
             ],
-            max_completion_tokens=max_tokens,
+            max_output_tokens=max_tokens,  # ✅ richtiger Parameter
         )
-        if response.choices and response.choices[0].message:
+        if (
+            response.choices
+            and response.choices[0].message
+            and response.choices[0].message.content
+        ):
             return response.choices[0].message.content.strip()
+        else:
+            print(f"⚠️ Modell {model} hat keine verwertbare Antwort geliefert.")
     except Exception as e:
         print(f"⚠️ Fehler mit Modell {model}: {e}")
     return ""
@@ -104,10 +113,10 @@ def summarize_text(text: str) -> tuple[str, str]:
             partial_summaries.append(summary)
         else:
             print(f"⚠️ Chunk {idx}: Keine Antwort erhalten")
-            partial_summaries.append("⚠️ Keine Antwort vom Modell.")
+            partial_summaries.append("⚠️ Zusammenfassung nicht möglich.")
 
     if not partial_summaries:
-        return ("⚠️ Keine Zusammenfassung möglich.", model_used)
+        return ("⚠️ Zusammenfassung nicht möglich.", model_used)
 
     combined_text = "\n".join(partial_summaries)
     final_summary = call_openai(
@@ -147,7 +156,11 @@ def create_weekly_pdf(summaries, filename, model_used: str):
     story.append(Spacer(1, 3*cm))
     data = [["Kalenderwoche:", f"{week} / {year}"], ["Erstellt am:", today.strftime("%d.%m.%Y")]]
     table = Table(data, colWidths=[5*cm, 10*cm])
-    table.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.5, colors.black), ("FONT", (0, 0), (-1, -1), "Helvetica", 12), ("ALIGN", (0, 0), (-1, -1), "LEFT")]))
+    table.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
+        ("FONT", (0, 0), (-1, -1), "Helvetica", 12),
+        ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+    ]))
     story.append(table)
     story.append(PageBreak())
 
@@ -205,8 +218,13 @@ def main():
         text = extract_text_from_pdf(pdf_path)
         print(f"📄 {os.path.basename(pdf_path)} – Länge extrahierter Text: {len(text)} Zeichen")
         summary, model_used = summarize_text(text)
-        model_used_final = model_used  # letzter genutzter Modus
-        summaries.append({"title": entry.title, "published": entry.published, "link": entry.link, "summary": summary})
+        model_used_final = model_used  # letztes tatsächlich genutztes Modell
+        summaries.append({
+            "title": entry.title,
+            "published": entry.published,
+            "link": entry.link,
+            "summary": summary,
+        })
 
     os.makedirs("weekly_reports", exist_ok=True)
     filename = f"weekly_reports/BFH_Entscheidungen_KW{datetime.now().isocalendar()[1]}_{datetime.now().year}.pdf"
