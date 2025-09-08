@@ -3,7 +3,7 @@ import re
 import requests
 import feedparser
 from datetime import datetime, date
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup   # --- NEU ---
 from PyPDF2 import PdfReader
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -11,7 +11,7 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak, 
 from reportlab.lib import colors
 from reportlab.lib.units import cm
 from openai import OpenAI
-import locale   # --- NEU ---
+import locale
 
 # -------------------
 # Konfiguration
@@ -25,11 +25,9 @@ PRICES = {
     "gpt-5": {"input": 1.25, "output": 10.00},
 }
 
-# --- NEU: deutsches Locale aktivieren für Datum ---
 try:
     locale.setlocale(locale.LC_TIME, "de_DE.UTF-8")
 except locale.Error:
-    # Fallback, wenn Runner Locale nicht hat
     pass
 
 
@@ -50,6 +48,17 @@ def download_pdf(url: str, folder="downloads"):
     return filename
 
 
+# --- NEU: Echten PDF-Link von der Detailseite holen ---
+def get_pdf_link(detail_url: str) -> str:
+    """Holt den echten PDF-Link von der Detailseite"""
+    r = requests.get(detail_url)
+    soup = BeautifulSoup(r.text, "html.parser")
+    link_tag = soup.find("a", href=lambda x: x and "detail/pdf" in x)
+    if link_tag:
+        return "https://www.bundesfinanzhof.de" + link_tag["href"]
+    raise ValueError(f"Kein PDF-Link gefunden auf {detail_url}")
+
+
 def extract_text_from_pdf(path: str) -> str:
     text = ""
     with open(path, "rb") as f:
@@ -59,14 +68,12 @@ def extract_text_from_pdf(path: str) -> str:
     return text
 
 
-# --- NEU: Silbentrennung/Kästchen bereinigen ---
 def clean_text(text: str) -> str:
-    text = re.sub(r"(\w+)-\s+(\w+)", r"\1\2", text)  # „Grund- stück“ → „Grundstück“
-    text = re.sub(r"\s+", " ", text)  # Mehrfach-Leerzeichen
+    text = re.sub(r"(\w+)-\s+(\w+)", r"\1\2", text)
+    text = re.sub(r"\s+", " ", text)
     return text.strip()
 
 
-# --- NEU: Leitsätze extrahieren, Abbruch bei "Tenor" ---
 def extract_leitsaetze(text: str) -> str:
     if "Leitsätze" not in text:
         return ""
@@ -76,7 +83,6 @@ def extract_leitsaetze(text: str) -> str:
     return clean_text(leitsatz.strip())
 
 
-# --- NEU: deutsches Datumsformat aus Feed ---
 def format_date(date_str: str) -> str:
     try:
         dt = datetime.strptime(date_str, "%a, %d %b %Y %H:%M:%S %z")
@@ -85,7 +91,6 @@ def format_date(date_str: str) -> str:
         return date_str
 
 
-# --- ÄNDERUNG: strenger Prompt ---
 def summarize_text(text: str) -> str:
     text = clean_text(text)
     response = client.chat.completions.create(
@@ -102,7 +107,7 @@ def summarize_text(text: str) -> str:
             },
             {"role": "user", "content": text},
         ],
-        max_completion_tokens=500,  # --- ÄNDERUNG ---
+        max_completion_tokens=500,
     )
     return response.choices[0].message.content.strip()
 
@@ -120,9 +125,7 @@ def estimate_cost(num_decisions: int, model: str) -> float:
 def create_weekly_pdf(summaries, filename):
     doc = SimpleDocTemplate(filename, pagesize=A4)
     styles = getSampleStyleSheet()
-
-    # --- NEU: Blocksatz, deutsche Silbentrennung ---
-    styles.add(ParagraphStyle(name="Block", parent=styles["Normal"], alignment=4))  
+    styles.add(ParagraphStyle(name="Block", parent=styles["Normal"], alignment=4))
 
     story = []
     today = date.today()
@@ -136,7 +139,7 @@ def create_weekly_pdf(summaries, filename):
 
     data = [
         ["Kalenderwoche:", f"{week} / {year}"],
-        ["Erstellt am:", today.strftime("%d.%m.%Y")],  # --- ÄNDERUNG: deutsches Format ---
+        ["Erstellt am:", today.strftime("%d.%m.%Y")],
     ]
     table = Table(data, colWidths=[5*cm, 10*cm])
     table.setStyle(TableStyle([
@@ -157,7 +160,6 @@ def create_weekly_pdf(summaries, filename):
         story.append(Paragraph(f"Link: <a href='{entry['link']}'>{entry['link']}</a>", styles["Normal"]))
         story.append(Spacer(1, 10))
 
-        # --- NEU: Leitsätze ---
         if entry.get("leitsaetze"):
             story.append(Paragraph("<b>Leitsätze:</b>", styles["Heading3"]))
             story.append(Paragraph(entry["leitsaetze"], styles["Block"]))
@@ -187,9 +189,17 @@ def main():
     FEED_URL = "https://www.bundesfinanzhof.de/de/precedent.rss"
     feed = feedparser.parse(FEED_URL)
 
+    # --- NEU: TEST_MODE ---
+    test_mode = os.getenv("TEST_MODE", "0") == "1"
+    if test_mode:
+        print("🧪 Testmodus aktiv: nur 1 Entscheidung wird verarbeitet")
+        entries = feed.entries[:1]
+    else:
+        entries = feed.entries
+
     summaries = []
-    for entry in feed.entries:
-        pdf_link = entry.link.replace("detail", "detail/pdf")  # BFH-Logik
+    for entry in entries:
+        pdf_link = get_pdf_link(entry.link)  # --- NEU ---
         pdf_path = download_pdf(pdf_link)
         raw_text = extract_text_from_pdf(pdf_path)
         text = clean_text(raw_text)
@@ -198,10 +208,10 @@ def main():
 
         summaries.append({
             "title": entry.title,
-            "published": format_date(entry.published),  # --- ÄNDERUNG ---
+            "published": format_date(entry.published),
             "link": entry.link,
             "summary": summary,
-            "leitsaetze": leitsaetze,  # --- NEU ---
+            "leitsaetze": leitsaetze,
         })
 
     os.makedirs("weekly_reports", exist_ok=True)
