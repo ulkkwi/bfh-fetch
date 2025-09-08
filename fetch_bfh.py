@@ -33,12 +33,42 @@ def extract_case_number(title: str) -> str:
     match = re.search(r"[A-Z]{1,3}\s?[A-Z]?\s?\d+/\d{2}", title)
     return match.group(0) if match else "Unbekannt"
 
-def download_pdf(url: str, folder="downloads"):
+def find_pdf_link(detail_url):
+    """Extrahiert den PDF-Link von der Detailseite einer BFH-Entscheidung"""
+    r = requests.get(detail_url)
+    r.raise_for_status()
+    soup = BeautifulSoup(r.text, "html.parser")
+
+    pdf_link = None
+    for a in soup.find_all("a", href=True):
+        href = a["href"]
+        if "/detail/pdf/" in href:  # <- neue BFH-Logik
+            pdf_link = href
+            if not pdf_link.startswith("http"):
+                pdf_link = "https://www.bundesfinanzhof.de" + pdf_link
+            break
+
+    return pdf_link
+
+def sanitize_filename(name: str) -> str:
+    """Entfernt unzulässige Zeichen aus Dateinamen"""
+    return "".join(c if c.isalnum() or c in ("_", "-", ".") else "_" for c in name)
+
+def download_pdf(pdf_link, aktenzeichen, folder="downloads"):
+    """Speichert die PDF-Datei lokal mit dem Aktenzeichen im Namen"""
     os.makedirs(folder, exist_ok=True)
-    filename = os.path.join(folder, url.split("/")[-1])
-    r = requests.get(url)
+    response = requests.get(pdf_link)
+    response.raise_for_status()
+
+    # Dateiname aus Aktenzeichen + Datum
+    clean_az = sanitize_filename(aktenzeichen)
+    basename = f"{clean_az}_{datetime.now().strftime('%Y%m%d')}.pdf"
+
+    filename = os.path.join(folder, basename)
     with open(filename, "wb") as f:
-        f.write(r.content)
+        f.write(response.content)
+
+    print(f"✅ PDF gespeichert: {filename}")
     return filename
 
 def extract_text_from_pdf(path: str) -> str:
@@ -149,8 +179,11 @@ def main():
 
     summaries = []
     for entry in feed.entries:
-        pdf_link = entry.link.replace("html", "pdf")  # BFH bietet PDF an
-        pdf_path = download_pdf(pdf_link)
+        pdf_link = find_pdf_link(entry.link)
+    if not pdf_link:
+        print(f"⚠️ Kein PDF-Link gefunden für {entry.link}")
+    continue
+        pdf_path = download_pdf(pdf_link, aktenzeichen)
         text = extract_text_from_pdf(pdf_path)
         summary = summarize_text(text)
 
