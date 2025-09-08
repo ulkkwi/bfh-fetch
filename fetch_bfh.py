@@ -18,7 +18,6 @@ import locale
 # -------------------
 client = OpenAI()
 DEFAULT_MODEL = os.getenv("MODEL", "gpt-5-nano")
-TEST_MODE = os.getenv("TEST_MODE") == "1"
 
 PRICES = {
     "gpt-5-nano": {"input": 0.05, "output": 0.40},
@@ -26,6 +25,7 @@ PRICES = {
     "gpt-5": {"input": 1.25, "output": 10.00},
 }
 
+# --- NEU: deutsches Locale ---
 try:
     locale.setlocale(locale.LC_TIME, "de_DE.UTF-8")
 except locale.Error:
@@ -49,7 +49,7 @@ def download_pdf(url: str, folder="downloads"):
     return filename
 
 
-# --- NEU: Echten PDF-Link von der Detailseite holen ---
+# --- NEU: Echten PDF-Link scrapen ---
 def get_pdf_link(detail_url: str) -> str:
     """Holt den echten PDF-Link von der Detailseite"""
     r = requests.get(detail_url)
@@ -69,12 +69,14 @@ def extract_text_from_pdf(path: str) -> str:
     return text
 
 
+# --- NEU: Textbereinigung ---
 def clean_text(text: str) -> str:
-    text = re.sub(r"(\w+)-\s+(\w+)", r"\1\2", text)
-    text = re.sub(r"\s+", " ", text)
+    text = re.sub(r"(\w+)-\s+(\w+)", r"\1\2", text)  # Silbentrennung
+    text = re.sub(r"\s+", " ", text)  # Mehrfach-Leerzeichen
     return text.strip()
 
 
+# --- NEU: Leitsätze extrahieren ---
 def extract_leitsaetze(text: str) -> str:
     if "Leitsätze" not in text:
         return ""
@@ -84,6 +86,7 @@ def extract_leitsaetze(text: str) -> str:
     return clean_text(leitsatz.strip())
 
 
+# --- NEU: deutsches Datumsformat ---
 def format_date(date_str: str) -> str:
     try:
         dt = datetime.strptime(date_str, "%a, %d %b %Y %H:%M:%S %z")
@@ -92,6 +95,7 @@ def format_date(date_str: str) -> str:
         return date_str
 
 
+# --- ÄNDERUNG: strenger Prompt ---
 def summarize_text(text: str) -> str:
     text = clean_text(text)
     response = client.chat.completions.create(
@@ -190,8 +194,8 @@ def main():
     FEED_URL = "https://www.bundesfinanzhof.de/de/precedent.rss"
     feed = feedparser.parse(FEED_URL)
 
-    # --- NEU: TEST_MODE ---
-    test_mode = os.getenv("TEST_MODE", "0") == "1"
+    # --- ÄNDERUNG: TEST_MODE als true/false ---
+    test_mode = os.getenv("TEST_MODE", "false").lower() == "true"
     if test_mode:
         print("🧪 Testmodus aktiv: nur 1 Entscheidung wird verarbeitet")
         entries = feed.entries[:1]
@@ -200,7 +204,7 @@ def main():
 
     summaries = []
     for entry in entries:
-        pdf_link = get_pdf_link(entry.link)  # --- NEU ---
+        pdf_link = get_pdf_link(entry.link)
         pdf_path = download_pdf(pdf_link)
         raw_text = extract_text_from_pdf(pdf_path)
         text = clean_text(raw_text)
