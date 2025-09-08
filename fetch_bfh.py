@@ -17,8 +17,9 @@ from openai import OpenAI
 # -------------------
 client = OpenAI()
 DEFAULT_MODEL = os.getenv("MODEL", "gpt-5-nano")
-TEST_MODE = os.getenv("TEST_MODE", "0") == "1"
+TEST_MODE = os.getenv("TEST_MODE") == "1"
 
+# Preise pro 1M Tokens (USD) – Stand 2025
 PRICES = {
     "gpt-5-nano": {"input": 0.05, "output": 0.40},
     "gpt-5-mini": {"input": 0.25, "output": 2.00},
@@ -29,33 +30,16 @@ PRICES = {
 # Hilfsfunktionen
 # -------------------
 def extract_case_number(title: str) -> str:
+    """Extrahiert das Aktenzeichen (z. B. VI R 4/23) aus dem Titel"""
     match = re.search(r"[A-Z]{1,3}\s?[A-Z]?\s?\d+/\d{2}", title)
     return match.group(0) if match else "Unbekannt"
 
-def sanitize_filename(name: str) -> str:
-    return "".join(c if c.isalnum() or c in ("_", "-", ".") else "_" for c in name)
-
-def find_pdf_link(detail_url: str) -> str | None:
-    r = requests.get(detail_url)
-    r.raise_for_status()
-    soup = BeautifulSoup(r.text, "html.parser")
-    for a in soup.find_all("a", href=True):
-        if "/detail/pdf/" in a["href"]:
-            href = a["href"]
-            if not href.startswith("http"):
-                href = "https://www.bundesfinanzhof.de" + href
-            return href
-    return None
-
-def download_pdf(pdf_link: str, aktenzeichen: str, folder="downloads"):
+def download_pdf(url: str, folder="downloads"):
     os.makedirs(folder, exist_ok=True)
-    response = requests.get(pdf_link)
-    response.raise_for_status()
-    clean_az = sanitize_filename(aktenzeichen)
-    basename = f"{clean_az}_{datetime.now().strftime('%Y%m%d')}.pdf"
-    filename = os.path.join(folder, basename)
+    filename = os.path.join(folder, url.split("/")[-1] + ".pdf")
+    r = requests.get(url)
     with open(filename, "wb") as f:
-        f.write(response.content)
+        f.write(r.content)
     return filename
 
 def extract_text_from_pdf(path: str) -> str:
@@ -64,14 +48,14 @@ def extract_text_from_pdf(path: str) -> str:
         reader = PdfReader(f)
         for page in reader.pages:
             text += page.extract_text() or ""
+    print(f"📄 {os.path.basename(path)} – Länge extrahierter Text: {len(text)} Zeichen")
     return text
 
 # -------------------
-# KI-Zusammenfassung mit Debug + Fallback
+# OpenAI Anbindung
 # -------------------
-def call_openai(model: str, prompt: str, max_tokens: int = 500) -> str:
+def call_openai(model: str, prompt: str, max_tokens: int = 1000) -> str:
     try:
-        # Debug: Länge des Prompts
         print(f"📝 Prompt-Länge: {len(prompt)} Zeichen")
 
         response = client.chat.completions.create(
@@ -80,15 +64,14 @@ def call_openai(model: str, prompt: str, max_tokens: int = 500) -> str:
                 {
                     "role": "system",
                     "content": (
-                        "Du bist ein juristischer Assistent. "
-                        "Fasse den folgenden Abschnitt einer BFH-Entscheidung in maximal 5 Sätzen narrativ zusammen. "
-                        "Vermeide Gesetzeszitate und Paragraphenangaben. "
-                        "Die Antwort soll klar und verständlich für Steuerberater:innen formuliert sein."
+                        "Fasse den folgenden Text kurz auf Deutsch zusammen. "
+                        "Antworte immer mit einer verständlichen Zusammenfassung, "
+                        "kein 'keine Antwort' und keine Auslassungen."
                     ),
                 },
                 {"role": "user", "content": prompt},
             ],
-            max_completion_tokens=max_tokens,  # jetzt höher (500 statt 150)
+            max_completion_tokens=max_tokens,
         )
 
         if (
@@ -107,64 +90,42 @@ def call_openai(model: str, prompt: str, max_tokens: int = 500) -> str:
         print(f"⚠️ Fehler mit Modell {model}: {e}")
     return ""
 
-def summarize_text(text: str) -> tuple[str, str]:
-    """Gibt (Zusammenfassung, verwendetes Modell) zurück"""
-    max_chunk_size = 2000
-    chunks = [text[i:i+max_chunk_size] for i in range(0, len(text), max_chunk_size)]
-    partial_summaries = []
-    model_used = DEFAULT_MODEL
-    print(f"➡️ Vorgesehenes Modell: {model_used}")
-
-    # Falls der Nutzer explizit gpt-5 wählt → keine Fallback-Logik
-    if model_used == "gpt-5":
-        print("⚠️ Achtung: Großes Modell gpt-5 wird direkt verwendet (manuell gewählt).")
+def summarize_text(text: str) -> str:
+    chunk_size = 1000
+    chunks = [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
+    summaries = []
 
     for idx, chunk in enumerate(chunks, 1):
-        summary = call_openai(model_used, chunk, 150)
-
-        # Fallback: Nano → Mini
-        if not summary and model_used == "gpt-5-nano":
+        summary = call_openai(DEFAULT_MODEL, chunk)
+        if not summary:
             print("⚠️ Nano liefert nichts – wechsle zu gpt-5-mini")
-            model_used = "gpt-5-mini"
-            summary = call_openai(model_used, chunk, 150)
+            summary = call_openai("gpt-5-mini", chunk)
+        summaries.append(summary or "⚠️ Keine Antwort erhalten")
+        print(f"✅ Chunk {idx}: {len(summaries[-1])} Zeichen Summary")
 
-        if summary:
-            print(f"✅ Chunk {idx}: {len(summary)} Zeichen Summary")
-            partial_summaries.append(summary)
-        else:
-            print(f"⚠️ Chunk {idx}: Keine Antwort erhalten")
-            partial_summaries.append("⚠️ Zusammenfassung nicht möglich.")
-
-    if not partial_summaries:
-        return ("⚠️ Zusammenfassung nicht möglich.", model_used)
-
-    combined_text = "\n".join(partial_summaries)
-    final_summary = call_openai(
-        model_used,
-        f"Fasse die gesamte Entscheidung in 2 Absätzen narrativ zusammen:\n{combined_text}",
-        300,
-    )
-    if final_summary:
-        return (final_summary, model_used)
-    else:
-        return ("\n".join(partial_summaries), model_used)
+    return "\n\n".join(summaries)
 
 # -------------------
-# PDF-Erstellung
+# Kosten
 # -------------------
 def estimate_cost(num_decisions: int, model: str) -> float:
     if model not in PRICES:
         return 0.0
     input_tokens = num_decisions * 30000
-    output_tokens = num_decisions * 500
+    output_tokens = num_decisions * 1000
     price_in = PRICES[model]["input"] / 1_000_000
     price_out = PRICES[model]["output"] / 1_000_000
-    return round(input_tokens * price_in + output_tokens * price_out, 4)
+    cost = input_tokens * price_in + output_tokens * price_out
+    return round(cost, 4)
 
-def create_weekly_pdf(summaries, filename, model_used: str):
+# -------------------
+# PDF Bericht
+# -------------------
+def create_weekly_pdf(summaries, filename):
     doc = SimpleDocTemplate(filename, pagesize=A4)
     styles = getSampleStyleSheet()
     story = []
+
     today = date.today()
     year, week, _ = datetime.now().isocalendar()
 
@@ -174,7 +135,11 @@ def create_weekly_pdf(summaries, filename, model_used: str):
     story.append(Spacer(1, 1*cm))
     story.append(Paragraph("<para align='center'>Wochenbericht zu aktuellen Entscheidungen</para>", styles["Title"]))
     story.append(Spacer(1, 3*cm))
-    data = [["Kalenderwoche:", f"{week} / {year}"], ["Erstellt am:", today.strftime("%d.%m.%Y")]]
+
+    data = [
+        ["Kalenderwoche:", f"{week} / {year}"],
+        ["Erstellt am:", today.strftime("%d.%m.%Y")],
+    ]
     table = Table(data, colWidths=[5*cm, 10*cm])
     table.setStyle(TableStyle([
         ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
@@ -187,50 +152,24 @@ def create_weekly_pdf(summaries, filename, model_used: str):
     # Inhalt
     story.append(Paragraph("<b>Zusammenfassungen der Entscheidungen</b>", styles["Heading1"]))
     story.append(Spacer(1, 20))
+
     for entry in summaries:
         case_number = extract_case_number(entry['title'])
-        heading = entry['title'] if case_number in entry['title'] else f"{case_number} – {entry['title']}"
-        story.append(Paragraph(f"<b>{heading}</b>", styles["Heading2"]))
+        story.append(Paragraph(f"<b>{case_number} – {entry['title']}</b>", styles["Heading2"]))
         story.append(Paragraph(f"Veröffentlicht: {entry['published']}", styles["Normal"]))
         story.append(Paragraph(f"Link: <a href='{entry['link']}'>{entry['link']}</a>", styles["Normal"]))
         story.append(Spacer(1, 10))
         story.append(Paragraph(entry["summary"], styles["Normal"]))
         story.append(Spacer(1, 20))
 
-    # Technischer Hinweis
     story.append(PageBreak())
     story.append(Paragraph("<b>Technische Hinweise</b>", styles["Heading1"]))
     story.append(Spacer(1, 10))
-    story.append(Paragraph(f"Vorgesehenes Modell: <b>{DEFAULT_MODEL}</b>", styles["Normal"]))
-    story.append(Paragraph(f"Tatsächlich verwendetes Modell: <b>{model_used}</b>", styles["Normal"]))
-
-    # 👉 Fallback-Hinweise
-    if DEFAULT_MODEL == "gpt-5-nano" and model_used == "gpt-5-mini":
-        story.append(Spacer(1, 10))
-        story.append(Paragraph(
-            "⚠️ Hinweis: Einige Zusammenfassungen konnten mit gpt-5-nano nicht erstellt werden "
-            "und wurden daher mit gpt-5-mini nachbearbeitet.",
-            styles["Normal"]
-        ))
-    elif model_used == "gpt-5":
-        story.append(Spacer(1, 10))
-        story.append(Paragraph(
-            "⚠️ Hinweis: Großes Modell gpt-5 wurde manuell genutzt. "
-            "Dies verursacht höhere Kosten.",
-            styles["Normal"]
-        ))
-    else:
-        story.append(Spacer(1, 10))
-        story.append(Paragraph(
-            "Alle Zusammenfassungen wurden erfolgreich mit dem vorgesehenen Modell erstellt.",
-            styles["Normal"]
-        ))
-
-    est_cost = estimate_cost(len(summaries), model_used)
-    story.append(Spacer(1, 10))
-    story.append(Paragraph(f"Geschätzte API-Kosten (mit {model_used}): ca. {est_cost} USD pro Woche.", styles["Normal"]))
-    story.append(Spacer(1, 10))
+    story.append(Paragraph(f"Zusammenfassungen automatisch erstellt mit Modell <b>{DEFAULT_MODEL}</b>.", styles["Normal"]))
+    est_cost = estimate_cost(len(summaries), DEFAULT_MODEL)
+    story.append(Paragraph(f"Geschätzte API-Kosten: ca. {est_cost} USD/Woche.", styles["Normal"]))
     story.append(Paragraph("Quelle: RSS-Feed des Bundesfinanzhofs.", styles["Normal"]))
+
     doc.build(story)
     print(f"📄 Wochen-PDF erstellt: {filename}")
 
@@ -240,28 +179,31 @@ def create_weekly_pdf(summaries, filename, model_used: str):
 def main():
     FEED_URL = "https://www.bundesfinanzhof.de/de/precedent.rss"
     feed = feedparser.parse(FEED_URL)
-    if not feed.entries:
-        print("⚠️ Keine neuen Entscheidungen im RSS-Feed gefunden.")
-        return
-
-    entries = feed.entries
-    if TEST_MODE:
-        entries = entries[:1]
-        print("🧪 Testmodus aktiv: nur 1 Entscheidung wird verarbeitet")
 
     summaries = []
-    model_used_final = DEFAULT_MODEL
+    entries = feed.entries[:1] if TEST_MODE else feed.entries
+    if TEST_MODE:
+        print("🧪 Testmodus aktiv: nur 1 Entscheidung wird verarbeitet")
+
     for entry in entries:
-        case_number = extract_case_number(entry.title)
-        pdf_link = find_pdf_link(entry.link)
-        if not pdf_link:
-            print(f"⚠️ Kein PDF-Link gefunden für {entry.link}")
+        pdf_url = None
+        try:
+            html = requests.get(entry.link).text
+            soup = BeautifulSoup(html, "html.parser")
+            link_tag = soup.find("a", href=re.compile(r"/pdf/"))
+            if link_tag:
+                pdf_url = "https://www.bundesfinanzhof.de" + link_tag["href"]
+        except Exception as e:
+            print("⚠️ Konnte PDF-Link nicht ermitteln:", e)
+
+        if not pdf_url:
+            print(f"⚠️ Keine PDF-URL für {entry.title}")
             continue
-        pdf_path = download_pdf(pdf_link, case_number)
+
+        pdf_path = download_pdf(pdf_url)
         text = extract_text_from_pdf(pdf_path)
-        print(f"📄 {os.path.basename(pdf_path)} – Länge extrahierter Text: {len(text)} Zeichen")
-        summary, model_used = summarize_text(text)
-        model_used_final = model_used
+        summary = summarize_text(text)
+
         summaries.append({
             "title": entry.title,
             "published": entry.published,
@@ -271,7 +213,7 @@ def main():
 
     os.makedirs("weekly_reports", exist_ok=True)
     filename = f"weekly_reports/BFH_Entscheidungen_KW{datetime.now().isocalendar()[1]}_{datetime.now().year}.pdf"
-    create_weekly_pdf(summaries, filename, model_used_final)
+    create_weekly_pdf(summaries, filename)
 
 if __name__ == "__main__":
     main()
