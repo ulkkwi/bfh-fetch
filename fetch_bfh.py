@@ -174,14 +174,14 @@ def create_weekly_pdf(summaries, filename):
 # Hauptlogik
 # -------------------
 def main():
-    FEED_URL = "https://www.bundesfinanzhof.de/de/entscheidung/entscheidungen-online/?rss=1"
-
+    FEED_URL = "https://www.bundesfinanzhof.de/de/precedent.rss"
     feed = feedparser.parse(FEED_URL)
 
     if not feed.entries:
         print("⚠️ Keine neuen Entscheidungen im RSS-Feed gefunden.")
         return
 
+    summaries = []
     for entry in feed.entries:
         title = entry.title.strip()
         link = entry.link
