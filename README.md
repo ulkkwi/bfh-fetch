@@ -1,2 +1,19 @@
-# bfh-fetch
-Zieht die wöchentlich neu veröffentlichten Entscheidungen des Bundesfinanzhofs (PDF), erstellt eine Zusammenfassung mittels KI (ChatGPT 5-nano) und versendet sie an Mailadresse
+# BFH-Entscheidungen – Automatisierte Zusammenfassungen & Wochenbericht (PDF)
+
+Dieses Projekt ruft wöchentlich die neuesten Entscheidungen des **Bundesfinanzhofs (BFH)** ab, lädt die Volltext-PDFs herunter, extrahiert den Text und erzeugt **narrative Kurzfassungen** über die OpenAI-API.  
+Zum Schluss werden alle Entscheidungen der Woche in einem **formalen Wochen-PDF** (Titelseite inkl. Kalenderwoche/Jahr, Aktenzeichen je Fall, technischer Hinweisblock mit Modellname & Kostenabschätzung) zusammengeführt.  
+Optional wird das Wochen-PDF **automatisch per E-Mail** versendet (SMTP).
+
+---
+
+## ✨ Features
+- Abruf der neuesten BFH-Entscheidungen via RSS
+- PDF-Download & Textextraktion
+- Narrative 2-Absatz-Zusammenfassung per OpenAI-API (Modell frei wählbar via ENV `MODEL`)
+- Wöchentliches PDF mit Titelseite (formal), Aktenzeichen vor jedem Titel
+- „Technische Hinweise“: verwendetes Modell + geschätzte API-Kosten (pro Woche)
+- Optionaler **Mailversand** des Wochen-PDFs aus GitHub Actions
+
+---
+
+## 📂 Struktur
