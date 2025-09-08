@@ -1,0 +1,46 @@
+name: Fetch BFH Decisions
+
+on:
+  schedule:
+    - cron: "0 10 * * 4"  # Jeden Donnerstag 10:00 UTC
+  workflow_dispatch:      # Manuelles Starten möglich
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run fetch script
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          MODEL: gpt-5-nano   # 👉 Standardmodell (kann in Secrets überschrieben werden)
+        run: python fetch_bfh.py
+
+      - name: Send weekly PDF via Email
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.EMAIL_USER }}
+          password: ${{ secrets.EMAIL_PASS }}
+          subject: "BFH Wochenbericht"
+          to: ulrich.wilke@wieselukas.de   # 👉 Empfängeradresse hier anpassen
+          from: ${{ secrets.EMAIL_USER }}
+          body: |
+            Guten Tag,
+
+            anbei der aktuelle Wochenbericht mit den neuesten Entscheidungen
+            des Bundesfinanzhofs (automatisch erstellt).
+
+            Mit freundlichen Grüßen
+            Ihr BFH-Report-System
+          attachments: weekly_reports/BFH_Entscheidungen_*.pdf
