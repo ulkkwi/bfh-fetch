@@ -88,7 +88,7 @@ def summarize_text(text: str) -> str:
             },
             {"role": "user", "content": text},
         ],
-        max_tokens=500,
+        max__completion_tokens=500,
     )
     return response.choices[0].message.content.strip()
 
