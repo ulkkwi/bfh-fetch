@@ -16,7 +16,8 @@ from openai import OpenAI
 # Konfiguration
 # -------------------
 client = OpenAI()
-DEFAULT_MODEL = os.getenv("MODEL", "gpt-5-nano")  # Modell aus Umgebungsvariable oder Default
+DEFAULT_MODEL = os.getenv("MODEL", "gpt-5-nano")
+TEST_MODE = os.getenv("TEST_MODE", "0") == "1"  # Flag aus Umgebungsvariable
 
 # Preise pro 1M Tokens (USD) – Stand 2025
 PRICES = {
@@ -29,30 +30,26 @@ PRICES = {
 # Hilfsfunktionen
 # -------------------
 def extract_case_number(title: str) -> str:
-    """Extrahiert das Aktenzeichen (z. B. VI R 4/23) aus dem Titel"""
     match = re.search(r"[A-Z]{1,3}\s?[A-Z]?\s?\d+/\d{2}", title)
     return match.group(0) if match else "Unbekannt"
 
 def sanitize_filename(name: str) -> str:
-    """Entfernt unzulässige Zeichen aus Dateinamen"""
     return "".join(c if c.isalnum() or c in ("_", "-", ".") else "_" for c in name)
 
 def find_pdf_link(detail_url: str) -> str | None:
-    """Extrahiert den PDF-Link von der Detailseite einer BFH-Entscheidung"""
     r = requests.get(detail_url)
     r.raise_for_status()
     soup = BeautifulSoup(r.text, "html.parser")
 
     for a in soup.find_all("a", href=True):
         href = a["href"]
-        if "/detail/pdf/" in href:  # neue BFH-Logik
+        if "/detail/pdf/" in href:
             if not href.startswith("http"):
                 href = "https://www.bundesfinanzhof.de" + href
             return href
     return None
 
 def download_pdf(pdf_link: str, aktenzeichen: str, folder="downloads"):
-    """Speichert die PDF-Datei lokal mit dem Aktenzeichen im Namen"""
     os.makedirs(folder, exist_ok=True)
     response = requests.get(pdf_link)
     response.raise_for_status()
@@ -74,51 +71,50 @@ def extract_text_from_pdf(path: str) -> str:
     return text
 
 def summarize_text(text: str) -> str:
-    # ---- Schritt 1: Text in Absätze teilen ----
-    paragraphs = text.split("\n\n")
-    chunks = []
-    current = ""
-
-    for para in paragraphs:
-        if len(current) + len(para) > 4000:
-            chunks.append(current.strip())
-            current = para
-        else:
-            current += "\n\n" + para
-    if current:
-        chunks.append(current.strip())
+    # ---- Split in kleine Chunks (~2000 Zeichen) ----
+    max_chunk_size = 2000
+    chunks = [text[i:i+max_chunk_size] for i in range(0, len(text), max_chunk_size)]
 
     partial_summaries = []
 
-    # ---- Schritt 2: Abschnitte einzeln zusammenfassen ----
+    # ---- Abschnitte einzeln zusammenfassen ----
     for idx, chunk in enumerate(chunks, 1):
+        try:
+            response = client.chat.completions.create(
+                model=DEFAULT_MODEL,
+                messages=[
+                    {"role": "system", "content": "Fasse diesen Abschnitt einer BFH-Entscheidung präzise auf Deutsch zusammen."},
+                    {"role": "user", "content": chunk},
+                ],
+                max_completion_tokens=150,
+            )
+            summary = response.choices[0].message.content.strip()
+            partial_summaries.append(summary)
+        except Exception as e:
+            print(f"⚠️ Fehler bei Chunk {idx}: {e}")
+
+    if not partial_summaries:
+        return "⚠️ Keine Zusammenfassung möglich."
+
+    # ---- Gesamtsynthese ----
+    combined_text = "\n".join(partial_summaries)
+    try:
         response = client.chat.completions.create(
             model=DEFAULT_MODEL,
             messages=[
-                {"role": "system", "content": "Fasse diesen Teil einer BFH-Entscheidung präzise auf Deutsch zusammen."},
-                {"role": "user", "content": chunk},
+                {"role": "system", "content": "Du bist ein juristischer Assistent. "
+                                              "Fasse die gesamte BFH-Entscheidung narrativ in 2 Absätzen zusammen. "
+                                              "Vermeide Fußnoten und Gesetzeszitate."},
+                {"role": "user", "content": combined_text},
             ],
             max_completion_tokens=300,
         )
-        summary = response.choices[0].message.content.strip()
-        partial_summaries.append(f"Teil {idx}: {summary}")
-
-    # ---- Schritt 3: Gesamtsynthese ----
-    combined_text = "\n\n".join(partial_summaries)
-    response = client.chat.completions.create(
-        model=DEFAULT_MODEL,
-        messages=[
-            {"role": "system", "content": "Du bist ein juristischer Assistent. "
-                                          "Fasse die gesamte BFH-Entscheidung narrativ in 2 Absätzen zusammen. "
-                                          "Vermeide Fußnoten und Gesetzeszitate."},
-            {"role": "user", "content": combined_text},
-        ],
-        max_completion_tokens=400,
-    )
-    return response.choices[0].message.content.strip()
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        print(f"⚠️ Fehler bei Gesamtsynthese: {e}")
+        return "\n".join(partial_summaries)
 
 def estimate_cost(num_decisions: int, model: str) -> float:
-    """Schätzt die Kosten pro Woche (USD)"""
     if model not in PRICES:
         return 0.0
     input_tokens = num_decisions * 30000
@@ -162,10 +158,7 @@ def create_weekly_pdf(summaries, filename):
 
     for entry in summaries:
         case_number = extract_case_number(entry['title'])
-        if case_number in entry['title']:
-            heading = entry['title']
-        else:
-            heading = f"{case_number} – {entry['title']}"
+        heading = entry['title'] if case_number in entry['title'] else f"{case_number} – {entry['title']}"
 
         story.append(Paragraph(f"<b>{heading}</b>", styles["Heading2"]))
         story.append(Paragraph(f"Veröffentlicht: {entry['published']}", styles["Normal"]))
@@ -199,8 +192,13 @@ def main():
         print("⚠️ Keine neuen Entscheidungen im RSS-Feed gefunden.")
         return
 
+    entries = feed.entries
+    if TEST_MODE:
+        entries = entries[:1]
+        print("🧪 Testmodus aktiv: nur 1 Entscheidung wird verarbeitet")
+
     summaries = []
-    for entry in feed.entries:
+    for entry in entries:
         case_number = extract_case_number(entry.title)
         pdf_link = find_pdf_link(entry.link)
         if not pdf_link:
@@ -210,6 +208,7 @@ def main():
         pdf_path = download_pdf(pdf_link, case_number)
         text = extract_text_from_pdf(pdf_path)
         print(f"📄 {os.path.basename(pdf_path)} – Länge extrahierter Text: {len(text)} Zeichen")
+
         summary = summarize_text(text)
 
         summaries.append({
