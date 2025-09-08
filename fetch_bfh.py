@@ -17,7 +17,7 @@ from openai import OpenAI
 # -------------------
 client = OpenAI()
 DEFAULT_MODEL = os.getenv("MODEL", "gpt-5-nano")
-TEST_MODE = os.getenv("TEST_MODE", "0") == "1"  # Flag aus Umgebungsvariable
+TEST_MODE = os.getenv("TEST_MODE", "0") == "1"
 
 # Preise pro 1M Tokens (USD) – Stand 2025
 PRICES = {
@@ -77,7 +77,6 @@ def summarize_text(text: str) -> str:
 
     partial_summaries = []
 
-    # ---- Abschnitte einzeln zusammenfassen ----
     for idx, chunk in enumerate(chunks, 1):
         try:
             response = client.chat.completions.create(
@@ -88,15 +87,20 @@ def summarize_text(text: str) -> str:
                 ],
                 max_completion_tokens=150,
             )
-            summary = response.choices[0].message.content.strip()
-            partial_summaries.append(summary)
+            if response.choices and response.choices[0].message:
+                summary = response.choices[0].message.content.strip()
+                print(f"✅ Chunk {idx}: {len(summary)} Zeichen Summary")
+                partial_summaries.append(summary)
+            else:
+                print(f"⚠️ Chunk {idx}: Keine Antwort erhalten")
+                partial_summaries.append("⚠️ Keine Antwort vom Modell für diesen Abschnitt.")
         except Exception as e:
             print(f"⚠️ Fehler bei Chunk {idx}: {e}")
+            partial_summaries.append("⚠️ Fehler beim Verarbeiten dieses Abschnitts.")
 
     if not partial_summaries:
         return "⚠️ Keine Zusammenfassung möglich."
 
-    # ---- Gesamtsynthese ----
     combined_text = "\n".join(partial_summaries)
     try:
         response = client.chat.completions.create(
@@ -109,7 +113,11 @@ def summarize_text(text: str) -> str:
             ],
             max_completion_tokens=300,
         )
-        return response.choices[0].message.content.strip()
+        if response.choices and response.choices[0].message:
+            return response.choices[0].message.content.strip()
+        else:
+            print("⚠️ Keine Antwort bei Gesamtsynthese")
+            return combined_text
     except Exception as e:
         print(f"⚠️ Fehler bei Gesamtsynthese: {e}")
         return "\n".join(partial_summaries)
