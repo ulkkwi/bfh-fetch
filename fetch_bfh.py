@@ -287,7 +287,7 @@ def main():
 
     os.makedirs("weekly_reports", exist_ok=True)
     filename = f"weekly_reports/BFH_Entscheidungen_KW{datetime.now().isocalendar()[1]}_{datetime.now().year}.pdf"
-    create_weekly_pdf(summaries, filename)
+    create_weekly_pdf(summaries, filename, DEFAULT_MODEL)
 
 if __name__ == "__main__":
     main()
