@@ -130,68 +130,73 @@ def extract_leitsatz(text: str) -> str:
 # Fallback-Logik für Modelle mit Chunking
 def summarize_text(text: str) -> str:
     """
-    Erstellt eine kurze Zusammenfassung in Chunks.
-    Nutzt Fallback-Logik über verschiedene Modelle.
+    Zerteilt den Text in kleinere Stücke und fasst sie zusammen.
+    Erst Chunk-Zusammenfassungen, dann End-Zusammenfassung.
     """
+    chunk_size = 2000  # vorher ~3000
+    summaries = []
+    chunks = [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
 
-    # Hilfsfunktion: Text in Blöcke zerlegen
-    def chunk_text(t: str, size=1500):  # kleiner schneiden
-        return [t[i:i+size] for i in range(0, len(t), size)]
-
-    chunks = chunk_text(text, 1500)
-    partial_summaries = []
-
-    for idx, chunk in enumerate(chunks, start=1):
+    for i, chunk in enumerate(chunks, start=1):
         for model in ["gpt-5-nano", "gpt-5-mini", "gpt-5"]:
             try:
-                print(f"➡️ Versuche Modell: {model}, Chunk {idx}/{len(chunks)}")
+                print(f"➡️ Versuche Modell: {model}, Chunk {i}/{len(chunks)}")
+                print(f"📝 Prompt-Länge: {len(chunk)} Zeichen")
 
                 response = client.chat.completions.create(
                     model=model,
                     messages=[
-                        {"role": "system", "content": "Fasse in 2–3 Sätzen zusammen."},
+                        {
+                            "role": "system",
+                            "content": (
+                                "Du bist ein juristischer Assistent. "
+                                "Fasse den folgenden Text prägnant in max. 5 Sätzen zusammen."
+                            ),
+                        },
                         {"role": "user", "content": chunk},
                     ],
-                    max_completion_tokens=800,  # mehr Platz
+                    max_completion_tokens=200,  # vorher 500
                 )
 
-                choice = response.choices[0]
-                print(f"🔎 Finish reason: {choice.finish_reason}")
+                finish_reason = response.choices[0].finish_reason
+                print(f"🔎 Finish reason: {finish_reason}")
 
-                content = choice.message.content or choice.message.refusal
+                content = response.choices[0].message.content.strip()
                 if content:
-                    partial_summaries.append(content.strip())
+                    summaries.append(content)
                     break
                 else:
                     print(f"⚠️ Modell {model} hat nichts geliefert, versuche nächstes...")
-
             except Exception as e:
                 print(f"⚠️ Fehler mit Modell {model}: {e}")
-        else:
-            partial_summaries.append("⚠️ Keine Antwort vom Modell erhalten.")
 
-    # Endzusammenfassung (hier max_completion_tokens auch größer setzen)
-    final_text = "\n\n".join(partial_summaries)
+    # Endzusammenfassung über alle Chunk-Zusammenfassungen
+    final_text = "\n\n".join(summaries)
     for model in ["gpt-5-nano", "gpt-5-mini", "gpt-5"]:
         try:
             print(f"➡️ Endzusammenfassung mit Modell: {model}")
             response = client.chat.completions.create(
                 model=model,
                 messages=[
-                    {"role": "system", "content": "Fasse alles in EINEM Absatz (max 5 Sätze) zusammen."},
+                    {
+                        "role": "system",
+                        "content": (
+                            "Fasse die folgende Liste von Teilsummenfassungen "
+                            "in einem kurzen Absatz (max. 5 Sätze) zusammen."
+                        ),
+                    },
                     {"role": "user", "content": final_text},
                 ],
-                max_completion_tokens=800,
+                max_completion_tokens=200,  # ebenfalls kürzer
             )
-            choice = response.choices[0]
-            print(f"🔎 Finish reason (Ende): {choice.finish_reason}")
+            finish_reason = response.choices[0].finish_reason
+            print(f"🔎 Finish reason (Ende): {finish_reason}")
 
-            content = choice.message.content or choice.message.refusal
+            content = response.choices[0].message.content.strip()
             if content:
-                return content.strip()
-
+                return content
         except Exception as e:
-            print(f"⚠️ Fehler mit Modell {model} bei Endzusammenfassung: {e}")
+            print(f"⚠️ Fehler bei Endzusammenfassung mit Modell {model}: {e}")
 
     return "⚠️ Keine Antwort vom Modell erhalten."
 
