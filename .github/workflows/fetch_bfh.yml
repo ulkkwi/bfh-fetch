@@ -3,16 +3,12 @@ name: Fetch BFH Decisions
 on:
   schedule:
     - cron: "0 10 * * 4"  # Jeden Donnerstag 10:00 UTC
-  workflow_dispatch:       # Manuelles Starten möglich
-    inputs:                # --- NEU ---
+  workflow_dispatch:      # Manuelles Starten möglich
+    inputs:
       test_mode:
-        description: "Testmodus aktivieren?"
-        required: true
+        description: "Testmodus aktivieren (true = nur 1 Entscheidung)"
+        required: false
         default: "false"
-        type: choice
-        options:
-          - "true"
-          - "false"
 
 jobs:
   run:
@@ -25,22 +21,14 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install German locale
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y locales
-          sudo locale-gen de_DE.UTF-8
-          echo "LANG=de_DE.UTF-8" >> $GITHUB_ENV
-          echo "LC_ALL=de_DE.UTF-8" >> $GITHUB_ENV
-
       - name: Install dependencies
         run: pip install -r requirements.txt
 
       - name: Run fetch script
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          MODEL: gpt-5-nano
-          TEST_MODE: ${{ github.event.inputs.test_mode }}   # --- NEU ---
+          MODEL: ${{ secrets.MODEL || 'gpt-5-nano' }}
+          TEST_MODE: ${{ github.event.inputs.test_mode }}
         run: python fetch_bfh.py
 
       - name: Send weekly PDF via Email
@@ -51,7 +39,7 @@ jobs:
           username: ${{ secrets.EMAIL_USER }}
           password: ${{ secrets.EMAIL_PASS }}
           subject: "BFH Wochenbericht"
-          to: ulrich.wilke@wieselukas.de
+          to: ulrich.wilke@wieselukas.de   # 👉 Empfängeradresse hier anpassen
           from: ${{ secrets.EMAIL_USER }}
           body: |
             Guten Tag,
