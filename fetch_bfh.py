@@ -31,7 +31,7 @@ PRICES = {
 # -------------------
 # Hilfsfunktionen
 # -------------------
-def chunk_text_by_tokens(text: str, max_tokens: int = 1500) -> list[str]:
+def chunk_text_by_tokens(text: str, model: str = "gpt-5-nano", max_tokens: int = 1500) -> list[str]:
     """
     Teilt den Text in Chunks, die vom Token-Limit des Modells passen.
     Standardmäßig ca. 2000 Tokens pro Chunk (Platz lassen für Prompt/Antwort).
