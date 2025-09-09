@@ -151,8 +151,8 @@ def summarize_text(text: str) -> str:
     Antworten mit finish_reason="length" werden trotzdem gespeichert,
     damit keine Informationen verloren gehen.
     """
-    # Text in Chunks teilen
-    chunk_size = 3000
+    # Text in tokenbasierte Chunks teilen
+    chunks = chunk_text_by_tokens(text, model="gpt-5-nano", max_tokens=2000)
     chunks = [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
     chunk_summaries = []
 
