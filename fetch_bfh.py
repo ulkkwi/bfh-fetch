@@ -127,36 +127,76 @@ def extract_leitsatz(text: str) -> str:
         return m.group(1).strip()
     return ""
 
-# Fallback-Logik für Modelle
+# Fallback-Logik für Modelle mit Chunking
 def summarize_text(text: str) -> str:
+    def chunk_text(text, size=6000):
+        """Teilt den Text in Blöcke von max. size Zeichen"""
+        return [text[i:i+size] for i in range(0, len(text), size)]
+
     models = ["gpt-5-nano", "gpt-5-mini", "gpt-5"]
+    chunks = chunk_text(text)
+
+    summaries = []
+    for idx, chunk in enumerate(chunks, start=1):
+        for model in models:
+            try:
+                print(f"➡️ Versuche Modell: {model}, Chunk {idx}/{len(chunks)}")
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": (
+                                "Du bist ein juristischer Assistent. "
+                                "Fasse den folgenden Text in EINEM kurzen Absatz zusammen. "
+                                "Maximal 5 Sätze. "
+                                "Vermeide Fußnoten, Aktenzeichen und Zitate. "
+                                "Erkläre den Kern so, dass Steuerberater:innen ihn in 30 Sekunden erfassen können."
+                            ),
+                        },
+                        {"role": "user", "content": chunk},
+                    ],
+                    max_completion_tokens=400,
+                )
+                content = response.choices[0].message.content.strip()
+                if content:
+                    summaries.append(content)
+                    break  # nächstes Modell für diesen Chunk nicht nötig
+                else:
+                    print(f"⚠️ Modell {model} hat nichts geliefert, versuche nächstes...")
+            except Exception as e:
+                print(f"⚠️ Fehler mit Modell {model}: {e}")
+                continue
+        else:
+            summaries.append("⚠️ Keine Antwort vom Modell erhalten.")
+
+    # End-Zusammenfassung aller Chunk-Summaries
+    joined = " ".join(summaries)
     for model in models:
         try:
-            print(f"➡️ Versuche Modell: {model}")
+            print(f"➡️ Endzusammenfassung mit Modell: {model}")
             response = client.chat.completions.create(
                 model=model,
                 messages=[
                     {
                         "role": "system",
                         "content": (
-                            "Du bist ein juristischer Assistent. "
-                            "Fasse die BFH-Entscheidung in EINEM kurzen Absatz zusammen. "
+                            "Fasse die folgenden Teilsummen in EINEM kurzen Absatz zusammen. "
                             "Maximal 5 Sätze. "
-                            "Vermeide Fußnoten, Aktenzeichen und Zitate. "
-                            "Erkläre den Kern der Entscheidung so, dass Steuerberater:innen ihn in 30 Sekunden erfassen können."
+                            "Nur die Kernaussage, keine Wiederholungen."
                         ),
                     },
-                    {"role": "user", "content": text},
+                    {"role": "user", "content": joined},
                 ],
-                max_tokens=500,
+                max_completion_tokens=300,
             )
-            content = response.choices[0].message.content.strip()
-            if content:
-                return content
-            else:
-                print(f"⚠️ Modell {model} hat nichts geliefert, versuche nächstes...")
+            final = response.choices[0].message.content.strip()
+            if final:
+                return final
         except Exception as e:
             print(f"⚠️ Fehler mit Modell {model}: {e}")
+            continue
+
     return "⚠️ Keine Antwort vom Modell erhalten."
 
 def estimate_cost(num_decisions: int, model: str) -> float:
