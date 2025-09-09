@@ -152,7 +152,7 @@ def summarize_text(text: str) -> str:
     damit keine Informationen verloren gehen.
     """
     # Text in tokenbasierte Chunks teilen
-    chunks = chunk_text_by_tokens(text, model="gpt-5-nano", max_tokens=2000)
+    chunks = chunk_text_by_tokens(text, model="gpt-5-nano", max_tokens=1000)
     chunk_summaries = []
 
     for i, chunk in enumerate(chunks, start=1):
@@ -219,7 +219,7 @@ def summarize_text(text: str) -> str:
                     },
                     {"role": "user", "content": combined},
                 ],
-                max_completion_tokens=1200,
+                max_completion_tokens=1500,
             )
 
             finish_reason = response.choices[0].finish_reason
