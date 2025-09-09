@@ -3,7 +3,6 @@ import re
 import requests
 import feedparser
 from datetime import datetime, date
-from bs4 import BeautifulSoup
 from PyPDF2 import PdfReader
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -11,7 +10,7 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak, 
 from reportlab.lib import colors
 from reportlab.lib.units import cm
 from openai import OpenAI
-import locale  # CHANGE: deutsches Datum
+import locale  # CHANGE: für deutsches Datumsformat
 
 # -------------------
 # Konfiguration
@@ -34,12 +33,21 @@ def extract_case_number(title: str) -> str:
     match = re.search(r"[A-Z]{1,3}\s?[A-Z]?\s?\d+/\d{2}", title)
     return match.group(0) if match else "Unbekannt"
 
+# CHANGE: BFH PDFs sauber benennen (ignoriere ?type=...)
 def download_pdf(url: str, folder="downloads"):
     os.makedirs(folder, exist_ok=True)
-    filename = os.path.join(folder, url.split("/")[-1])
+
+    basename = url.split("/")[-1].split("?")[0]  # Query-Teil abschneiden
+    if not basename.lower().endswith(".pdf"):
+        basename = f"{basename}.pdf"
+
+    filename = os.path.join(folder, basename)
+
     r = requests.get(url)
+    r.raise_for_status()
     with open(filename, "wb") as f:
         f.write(r.content)
+
     return filename
 
 def extract_text_from_pdf(path: str) -> str:
@@ -103,9 +111,7 @@ def estimate_cost(num_decisions: int, model: str) -> float:
 def create_weekly_pdf(summaries, filename):
     doc = SimpleDocTemplate(filename, pagesize=A4)
     styles = getSampleStyleSheet()
-
-    # CHANGE: Blocksatz
-    styles.add(ParagraphStyle(name="Justify", parent=styles["Normal"], alignment=4))
+    styles.add(ParagraphStyle(name="Justify", parent=styles["Normal"], alignment=4))  # CHANGE: Blocksatz
 
     story = []
 
@@ -138,7 +144,7 @@ def create_weekly_pdf(summaries, filename):
 
     for entry in summaries:
         case_number = extract_case_number(entry['title'])
-        clean_title = entry['title'].replace(case_number, "").strip()  # CHANGE: doppelte Aktenzeichen raus
+        clean_title = entry['title'].replace(case_number, "").strip()  # CHANGE: kein doppeltes Aktenzeichen
         story.append(Paragraph(f"<b>{case_number} – {clean_title}</b>", styles["Heading2"]))
 
         # CHANGE: deutsches Datumsformat
@@ -187,7 +193,7 @@ def main():
 
     summaries = []
     for entry in feed.entries:
-        pdf_link = entry.link.replace("detail", "detail/pdf")
+        pdf_link = entry.link.replace("detail", "detail/pdf")  # CHANGE: BFH-Links auf PDF
         pdf_path = download_pdf(pdf_link)
         raw_text = extract_text_from_pdf(pdf_path)
 
