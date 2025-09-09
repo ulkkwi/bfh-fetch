@@ -2,6 +2,7 @@ import os
 import re
 import requests
 import feedparser
+import tiktoken
 from urllib.parse import urljoin
 from datetime import datetime, date
 from PyPDF2 import PdfReader
@@ -30,6 +31,22 @@ PRICES = {
 # -------------------
 # Hilfsfunktionen
 # -------------------
+def chunk_text_by_tokens(text: str, model: str = "gpt-5-nano", max_tokens: int = 2000):
+    """
+    Teilt den Text in Chunks, die vom Token-Limit des Modells passen.
+    Standardmäßig ca. 2000 Tokens pro Chunk (Platz lassen für Prompt/Antwort).
+    """
+    encoding = tiktoken.encoding_for_model(model)
+    tokens = encoding.encode(text)
+
+    chunks = []
+    for i in range(0, len(tokens), max_tokens):
+        chunk_tokens = tokens[i:i + max_tokens]
+        chunk_text = encoding.decode(chunk_tokens)
+        chunks.append(chunk_text)
+
+    return chunks
+
 def extract_case_number(title: str) -> str:
     """Extrahiert das Aktenzeichen (z. B. VI R 4/23) aus dem Titel"""
     match = re.search(r"[A-Z]{1,3}\s?[A-Z]?\s?\d+/\d{2}", title)
@@ -130,23 +147,20 @@ def extract_leitsatz(text: str) -> str:
 # Fallback-Logik für Modelle mit Chunking
 def summarize_text(text: str) -> str:
     """
-    Zerlegt den Text in Chunks und erstellt erst Chunk-Summaries,
-    dann eine End-Zusammenfassung in 1 Absatz.
+    Teilt den Text in Chunks und fasst ihn zusammen.
+    Antworten mit finish_reason="length" werden trotzdem gespeichert,
+    damit keine Informationen verloren gehen.
     """
+    # Text in Chunks teilen
     chunk_size = 3000
-    overlap = 200
-    chunks = []
-
-    # Text in überlappende Chunks zerlegen
-    for i in range(0, len(text), chunk_size - overlap):
-        chunks.append(text[i:i + chunk_size])
-
+    chunks = [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
     chunk_summaries = []
 
-    for idx, chunk in enumerate(chunks, start=1):
+    for i, chunk in enumerate(chunks, start=1):
         for model in ["gpt-5-nano", "gpt-5-mini", "gpt-5"]:
             try:
-                print(f"➡️ Versuche Modell: {model}, Chunk {idx}/{len(chunks)}")
+                print(f"➡️ Versuche Modell: {model}, Chunk {i}/{len(chunks)}")
+
                 response = client.chat.completions.create(
                     model=model,
                     messages=[
@@ -154,13 +168,13 @@ def summarize_text(text: str) -> str:
                             "role": "system",
                             "content": (
                                 "Du bist ein juristischer Assistent. "
-                                "Fasse den folgenden Abschnitt eines BFH-Urteils in 2–3 Sätzen zusammen. "
-                                "Keine Fußnoten, Aktenzeichen oder Zitate."
+                                "Fasse den folgenden Text präzise zusammen. "
+                                "Konzentriere dich auf den Kern der Entscheidung."
                             ),
                         },
                         {"role": "user", "content": chunk},
                     ],
-                    max_completion_tokens=500,
+                    max_completion_tokens=400,
                 )
 
                 finish_reason = response.choices[0].finish_reason
@@ -169,6 +183,8 @@ def summarize_text(text: str) -> str:
                 print(f"🔎 Finish reason: {finish_reason}")
 
                 if content:
+                    if finish_reason == "length":
+                        print("✂️ Antwort war abgeschnitten, Teiltext wird trotzdem übernommen.")
                     chunk_summaries.append(content)
                     break  # nächstes Chunk
                 else:
@@ -177,11 +193,12 @@ def summarize_text(text: str) -> str:
             except Exception as e:
                 print(f"⚠️ Fehler mit Modell {model}: {e}")
 
+    # Endzusammenfassung aus allen Chunk-Zusammenfassungen
     if not chunk_summaries:
         return "⚠️ Keine Antwort vom Modell erhalten."
 
-    # End-Zusammenfassung aus Chunk-Summaries
-    joined = "\n".join(chunk_summaries)
+    combined = "\n".join(chunk_summaries)
+
     for model in ["gpt-5-nano", "gpt-5-mini", "gpt-5"]:
         try:
             print(f"➡️ Endzusammenfassung mit Modell: {model}")
@@ -192,14 +209,13 @@ def summarize_text(text: str) -> str:
                         "role": "system",
                         "content": (
                             "Du bist ein juristischer Assistent. "
-                            "Fasse die folgenden Teilsummaries in EINEM kurzen Absatz zusammen. "
-                            "Maximal 5 Sätze. "
-                            "Erkläre den Kern der Entscheidung so, dass Steuerberater:innen ihn in 30 Sekunden erfassen können."
+                            "Fasse die folgenden Teilergebnisse zu EINEM klaren Absatz zusammen. "
+                            "Maximal 5 Sätze, keine Fußnoten, keine Zitate."
                         ),
                     },
-                    {"role": "user", "content": joined},
+                    {"role": "user", "content": combined},
                 ],
-                max_completion_tokens=500,
+                max_completion_tokens=400,
             )
 
             finish_reason = response.choices[0].finish_reason
@@ -208,10 +224,12 @@ def summarize_text(text: str) -> str:
             print(f"🔎 Finish reason (Ende): {finish_reason}")
 
             if content:
+                if finish_reason == "length":
+                    print("✂️ Endzusammenfassung wurde abgeschnitten, Teiltext wird übernommen.")
                 return content
 
         except Exception as e:
-            print(f"⚠️ Fehler mit Modell {model} (Ende): {e}")
+            print(f"⚠️ Fehler bei Endzusammenfassung mit Modell {model}: {e}")
 
     return "⚠️ Keine Antwort vom Modell erhalten."
 
