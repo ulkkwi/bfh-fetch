@@ -129,18 +129,24 @@ def extract_leitsatz(text: str) -> str:
 
 # Fallback-Logik für Modelle mit Chunking
 def summarize_text(text: str) -> str:
-    def chunk_text(text, size=6000):
-        """Teilt den Text in Blöcke von max. size Zeichen"""
-        return [text[i:i+size] for i in range(0, len(text), size)]
+    """
+    Erstellt eine kurze Zusammenfassung in Chunks.
+    Nutzt Fallback-Logik über verschiedene Modelle.
+    """
 
-    models = ["gpt-5-nano", "gpt-5-mini", "gpt-5"]
-    chunks = chunk_text(text)
+    # Hilfsfunktion: Text in Blöcke zerlegen
+    def chunk_text(t: str, size=3000):
+        return [t[i:i+size] for i in range(0, len(t), size)]
 
-    summaries = []
+    chunks = chunk_text(text, 3000)
+    partial_summaries = []
+
     for idx, chunk in enumerate(chunks, start=1):
-        for model in models:
+        for model in ["gpt-5-nano", "gpt-5-mini", "gpt-5"]:
             try:
                 print(f"➡️ Versuche Modell: {model}, Chunk {idx}/{len(chunks)}")
+                print(f"📝 Prompt-Länge: {len(chunk)} Zeichen")
+
                 response = client.chat.completions.create(
                     model=model,
                     messages=[
@@ -148,31 +154,38 @@ def summarize_text(text: str) -> str:
                             "role": "system",
                             "content": (
                                 "Du bist ein juristischer Assistent. "
-                                "Fasse den folgenden Text in EINEM kurzen Absatz zusammen. "
-                                "Maximal 5 Sätze. "
-                                "Vermeide Fußnoten, Aktenzeichen und Zitate. "
-                                "Erkläre den Kern so, dass Steuerberater:innen ihn in 30 Sekunden erfassen können."
+                                "Fasse den folgenden Ausschnitt einer BFH-Entscheidung in 2–3 Sätzen zusammen. "
+                                "Bitte nur Kernaussage, keine Nebensätze, keine Zitate, keine Aktenzeichen."
                             ),
                         },
                         {"role": "user", "content": chunk},
                     ],
-                    max_completion_tokens=400,
+                    max_completion_tokens=300,
                 )
-                content = response.choices[0].message.content.strip()
+
+                # Debug: ganze API-Antwort anzeigen
+                print("🔎 API-Rohantwort:", response)
+
+                content = response.choices[0].message.content
+                if not content:
+                    content = response.choices[0].message.refusal
+
                 if content:
-                    summaries.append(content)
-                    break  # nächstes Modell für diesen Chunk nicht nötig
+                    partial_summaries.append(content.strip())
+                    break  # nächstes Chunk
                 else:
                     print(f"⚠️ Modell {model} hat nichts geliefert, versuche nächstes...")
+
             except Exception as e:
                 print(f"⚠️ Fehler mit Modell {model}: {e}")
-                continue
         else:
-            summaries.append("⚠️ Keine Antwort vom Modell erhalten.")
+            partial_summaries.append("⚠️ Keine Antwort vom Modell erhalten.")
 
-    # End-Zusammenfassung aller Chunk-Summaries
-    joined = " ".join(summaries)
-    for model in models:
+    # Endzusammenfassung aller Chunks
+    final_text = "\n\n".join(partial_summaries)
+
+    # Noch einmal Modelle für die End-Kurzfassung probieren
+    for model in ["gpt-5-nano", "gpt-5-mini", "gpt-5"]:
         try:
             print(f"➡️ Endzusammenfassung mit Modell: {model}")
             response = client.chat.completions.create(
@@ -181,21 +194,27 @@ def summarize_text(text: str) -> str:
                     {
                         "role": "system",
                         "content": (
-                            "Fasse die folgenden Teilsummen in EINEM kurzen Absatz zusammen. "
-                            "Maximal 5 Sätze. "
-                            "Nur die Kernaussage, keine Wiederholungen."
+                            "Du bist ein juristischer Assistent. "
+                            "Fasse die gesamte Entscheidung in EINEM Absatz zusammen. "
+                            "Maximal 5 Sätze. Nur Kernaussage, keine Nebensätze, keine Zitate."
                         ),
                     },
-                    {"role": "user", "content": joined},
+                    {"role": "user", "content": final_text},
                 ],
-                max_completion_tokens=300,
+                max_completion_tokens=400,
             )
-            final = response.choices[0].message.content.strip()
-            if final:
-                return final
+
+            print("🔎 API-Rohantwort (Ende):", response)
+
+            content = response.choices[0].message.content
+            if not content:
+                content = response.choices[0].message.refusal
+
+            if content:
+                return content.strip()
+
         except Exception as e:
-            print(f"⚠️ Fehler mit Modell {model}: {e}")
-            continue
+            print(f"⚠️ Fehler mit Modell {model} bei Endzusammenfassung: {e}")
 
     return "⚠️ Keine Antwort vom Modell erhalten."
 
