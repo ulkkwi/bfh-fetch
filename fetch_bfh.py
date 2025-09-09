@@ -135,44 +135,33 @@ def summarize_text(text: str) -> str:
     """
 
     # Hilfsfunktion: Text in Blöcke zerlegen
-    def chunk_text(t: str, size=3000):
+    def chunk_text(t: str, size=1500):  # kleiner schneiden
         return [t[i:i+size] for i in range(0, len(t), size)]
 
-    chunks = chunk_text(text, 3000)
+    chunks = chunk_text(text, 1500)
     partial_summaries = []
 
     for idx, chunk in enumerate(chunks, start=1):
         for model in ["gpt-5-nano", "gpt-5-mini", "gpt-5"]:
             try:
                 print(f"➡️ Versuche Modell: {model}, Chunk {idx}/{len(chunks)}")
-                print(f"📝 Prompt-Länge: {len(chunk)} Zeichen")
 
                 response = client.chat.completions.create(
                     model=model,
                     messages=[
-                        {
-                            "role": "system",
-                            "content": (
-                                "Du bist ein juristischer Assistent. "
-                                "Fasse den folgenden Ausschnitt einer BFH-Entscheidung in 2–3 Sätzen zusammen. "
-                                "Bitte nur Kernaussage, keine Nebensätze, keine Zitate, keine Aktenzeichen."
-                            ),
-                        },
+                        {"role": "system", "content": "Fasse in 2–3 Sätzen zusammen."},
                         {"role": "user", "content": chunk},
                     ],
-                    max_completion_tokens=300,
+                    max_completion_tokens=800,  # mehr Platz
                 )
 
-                # Debug: ganze API-Antwort anzeigen
-                print("🔎 API-Rohantwort:", response)
+                choice = response.choices[0]
+                print(f"🔎 Finish reason: {choice.finish_reason}")
 
-                content = response.choices[0].message.content
-                if not content:
-                    content = response.choices[0].message.refusal
-
+                content = choice.message.content or choice.message.refusal
                 if content:
                     partial_summaries.append(content.strip())
-                    break  # nächstes Chunk
+                    break
                 else:
                     print(f"⚠️ Modell {model} hat nichts geliefert, versuche nächstes...")
 
@@ -181,35 +170,23 @@ def summarize_text(text: str) -> str:
         else:
             partial_summaries.append("⚠️ Keine Antwort vom Modell erhalten.")
 
-    # Endzusammenfassung aller Chunks
+    # Endzusammenfassung (hier max_completion_tokens auch größer setzen)
     final_text = "\n\n".join(partial_summaries)
-
-    # Noch einmal Modelle für die End-Kurzfassung probieren
     for model in ["gpt-5-nano", "gpt-5-mini", "gpt-5"]:
         try:
             print(f"➡️ Endzusammenfassung mit Modell: {model}")
             response = client.chat.completions.create(
                 model=model,
                 messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "Du bist ein juristischer Assistent. "
-                            "Fasse die gesamte Entscheidung in EINEM Absatz zusammen. "
-                            "Maximal 5 Sätze. Nur Kernaussage, keine Nebensätze, keine Zitate."
-                        ),
-                    },
+                    {"role": "system", "content": "Fasse alles in EINEM Absatz (max 5 Sätze) zusammen."},
                     {"role": "user", "content": final_text},
                 ],
-                max_completion_tokens=400,
+                max_completion_tokens=800,
             )
+            choice = response.choices[0]
+            print(f"🔎 Finish reason (Ende): {choice.finish_reason}")
 
-            print("🔎 API-Rohantwort (Ende):", response)
-
-            content = response.choices[0].message.content
-            if not content:
-                content = response.choices[0].message.refusal
-
+            content = choice.message.content or choice.message.refusal
             if content:
                 return content.strip()
 
