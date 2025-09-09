@@ -31,7 +31,7 @@ PRICES = {
 # -------------------
 # Hilfsfunktionen
 # -------------------
-def chunk_text_by_tokens(text: str, model: str = "gpt-5-nano", max_tokens: int = 2000):
+def chunk_text_by_tokens(text: str, max_tokens: int = 1500) -> list[str]:
     """
     Teilt den Text in Chunks, die vom Token-Limit des Modells passen.
     Standardmäßig ca. 2000 Tokens pro Chunk (Platz lassen für Prompt/Antwort).
@@ -173,7 +173,7 @@ def summarize_text(text: str) -> str:
                         },
                         {"role": "user", "content": chunk},
                     ],
-                    max_completion_tokens=400,
+                    max_completion_tokens=1200,
                 )
 
                 finish_reason = response.choices[0].finish_reason
@@ -187,7 +187,12 @@ def summarize_text(text: str) -> str:
                     chunk_summaries.append(content)
                     break  # nächstes Chunk
                 else:
-                    print(f"⚠️ Modell {model} hat nichts geliefert, versuche nächstes...")
+                    if finish_reason == "length":
+                        print("✂️ Modell hat Text abgeschnitten, aber nichts zurückgegeben – Platzhalter eingefügt.")
+                        chunk_summaries.append("[Antwort abgeschnitten]")
+                        break
+                    else:
+                        print(f"⚠️ Modell {model} hat nichts geliefert, versuche nächstes...")
 
             except Exception as e:
                 print(f"⚠️ Fehler mit Modell {model}: {e}")
@@ -214,7 +219,7 @@ def summarize_text(text: str) -> str:
                     },
                     {"role": "user", "content": combined},
                 ],
-                max_completion_tokens=400,
+                max_completion_tokens=1200,
             )
 
             finish_reason = response.choices[0].finish_reason
