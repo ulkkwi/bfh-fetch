@@ -1,4 +1,5 @@
 import locale
+import os
 from datetime import datetime, date
 from reportlab.lib.pagesizes import A4
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak, Table, TableStyle
@@ -11,7 +12,8 @@ from reportlab.pdfbase.ttfonts import TTFont
 import pyphen
 
 # Schriftart mit Bindestrich
-pdfmetrics.registerFont(TTFont("DejaVuSans", "DejaVuSans.ttf"))
+FONT_PATH = os.path.join(os.path.dirname(__file__), "fonts", "DejaVuSans.ttf")
+pdfmetrics.registerFont(TTFont("DejaVuSans", FONT_PATH))
 
 # Deutsche Lokalisierung für Datum
 try:
