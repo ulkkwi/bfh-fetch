@@ -3,7 +3,7 @@ import re
 import requests
 import feedparser
 from datetime import datetime, date
-from bs4 import BeautifulSoup   # --- NEU ---
+from bs4 import BeautifulSoup
 from PyPDF2 import PdfReader
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -11,54 +11,36 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak, 
 from reportlab.lib import colors
 from reportlab.lib.units import cm
 from openai import OpenAI
-import locale
+import locale  # CHANGE: deutsches Datum
 
 # -------------------
 # Konfiguration
 # -------------------
 client = OpenAI()
-DEFAULT_MODEL = os.getenv("MODEL", "gpt-5-nano")
+DEFAULT_MODEL = os.getenv("MODEL", "gpt-5-nano")  # Modell aus Umgebungsvariable oder Default
 
+# Preise pro 1M Tokens (USD) – Stand 2025
 PRICES = {
     "gpt-5-nano": {"input": 0.05, "output": 0.40},
     "gpt-5-mini": {"input": 0.25, "output": 2.00},
     "gpt-5": {"input": 1.25, "output": 10.00},
 }
 
-# --- NEU: deutsches Locale ---
-try:
-    locale.setlocale(locale.LC_TIME, "de_DE.UTF-8")
-except locale.Error:
-    pass
-
-
 # -------------------
 # Hilfsfunktionen
 # -------------------
 def extract_case_number(title: str) -> str:
+    """Extrahiert das Aktenzeichen (z. B. VI R 4/23) aus dem Titel"""
     match = re.search(r"[A-Z]{1,3}\s?[A-Z]?\s?\d+/\d{2}", title)
     return match.group(0) if match else "Unbekannt"
 
-
 def download_pdf(url: str, folder="downloads"):
     os.makedirs(folder, exist_ok=True)
-    filename = os.path.join(folder, url.split("/")[-1] + ".pdf")
+    filename = os.path.join(folder, url.split("/")[-1])
     r = requests.get(url)
     with open(filename, "wb") as f:
         f.write(r.content)
     return filename
-
-
-# --- NEU: Echten PDF-Link scrapen ---
-def get_pdf_link(detail_url: str) -> str:
-    """Holt den echten PDF-Link von der Detailseite"""
-    r = requests.get(detail_url)
-    soup = BeautifulSoup(r.text, "html.parser")
-    link_tag = soup.find("a", href=lambda x: x and "detail/pdf" in x)
-    if link_tag:
-        return "https://www.bundesfinanzhof.de" + link_tag["href"]
-    raise ValueError(f"Kein PDF-Link gefunden auf {detail_url}")
-
 
 def extract_text_from_pdf(path: str) -> str:
     text = ""
@@ -68,74 +50,69 @@ def extract_text_from_pdf(path: str) -> str:
             text += page.extract_text() or ""
     return text
 
+def extract_leitsatz(text: str) -> str:
+    """Schneidet die Leitsätze bis vor 'Tenor' heraus"""
+    m = re.search(r"Leitsätze:(.*?)(?=Tenor)", text, re.S | re.I)
+    if m:
+        return m.group(1).strip()
+    return ""
 
-# --- NEU: Textbereinigung ---
-def clean_text(text: str) -> str:
-    text = re.sub(r"(\w+)-\s+(\w+)", r"\1\2", text)  # Silbentrennung
-    text = re.sub(r"\s+", " ", text)  # Mehrfach-Leerzeichen
-    return text.strip()
-
-
-# --- NEU: Leitsätze extrahieren ---
-def extract_leitsaetze(text: str) -> str:
-    if "Leitsätze" not in text:
-        return ""
-    leitsatz = text.split("Leitsätze", 1)[1]
-    if "Tenor" in leitsatz:
-        leitsatz = leitsatz.split("Tenor", 1)[0]
-    return clean_text(leitsatz.strip())
-
-
-# --- NEU: deutsches Datumsformat ---
-def format_date(date_str: str) -> str:
-    try:
-        dt = datetime.strptime(date_str, "%a, %d %b %Y %H:%M:%S %z")
-        return dt.strftime("%d.%m.%Y")
-    except Exception:
-        return date_str
-
-
-# --- ÄNDERUNG: strenger Prompt ---
+# CHANGE: Fallback-Logik für Modelle
 def summarize_text(text: str) -> str:
-    text = clean_text(text)
-    response = client.chat.completions.create(
-        model=DEFAULT_MODEL,
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "Du bist ein juristischer Assistent. "
-                    "Fasse die folgende BFH-Entscheidung in **höchstens 5 Sätzen** "
-                    "verständlich und narrativ zusammen. "
-                    "Vermeide Gesetzeszitate, Fachchinesisch und Wiederholungen."
-                ),
-            },
-            {"role": "user", "content": text},
-        ],
-        max_completion_tokens=500,
-    )
-    return response.choices[0].message.content.strip()
-
+    models = ["gpt-5-nano", "gpt-5-mini", "gpt-5"]
+    for model in models:
+        try:
+            print(f"➡️ Versuche Modell: {model}")
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "Du bist ein juristischer Assistent. "
+                            "Fasse die BFH-Entscheidung in EINEM kurzen Absatz zusammen. "
+                            "Maximal 5 Sätze. "
+                            "Vermeide Fußnoten, Aktenzeichen und Zitate. "
+                            "Erkläre den Kern der Entscheidung so, dass Steuerberater:innen ihn in 30 Sekunden erfassen können."
+                        ),
+                    },
+                    {"role": "user", "content": text},
+                ],
+                max_completion_tokens=500,
+            )
+            content = response.choices[0].message.content.strip()
+            if content:
+                return content
+            else:
+                print(f"⚠️ Modell {model} hat nichts geliefert, versuche nächstes...")
+        except Exception as e:
+            print(f"⚠️ Fehler mit Modell {model}: {e}")
+    return "⚠️ Keine Antwort vom Modell erhalten."
 
 def estimate_cost(num_decisions: int, model: str) -> float:
+    """Schätzt die Kosten pro Woche (USD)"""
     if model not in PRICES:
         return 0.0
     input_tokens = num_decisions * 30000
     output_tokens = num_decisions * 500
     price_in = PRICES[model]["input"] / 1_000_000
     price_out = PRICES[model]["output"] / 1_000_000
-    return round(input_tokens * price_in + output_tokens * price_out, 4)
-
+    cost = input_tokens * price_in + output_tokens * price_out
+    return round(cost, 4)
 
 def create_weekly_pdf(summaries, filename):
     doc = SimpleDocTemplate(filename, pagesize=A4)
     styles = getSampleStyleSheet()
-    styles.add(ParagraphStyle(name="Block", parent=styles["Normal"], alignment=4))
+
+    # CHANGE: Blocksatz
+    styles.add(ParagraphStyle(name="Justify", parent=styles["Normal"], alignment=4))
 
     story = []
+
     today = date.today()
     year, week, _ = datetime.now().isocalendar()
 
+    # ---- Titelseite ----
     story.append(Spacer(1, 5*cm))
     story.append(Paragraph("<para align='center'><b>Bundesfinanzhof</b></para>", styles["Title"]))
     story.append(Spacer(1, 1*cm))
@@ -155,28 +132,43 @@ def create_weekly_pdf(summaries, filename):
     story.append(table)
     story.append(PageBreak())
 
+    # ---- Inhalt ----
     story.append(Paragraph("<b>Zusammenfassungen der Entscheidungen</b>", styles["Heading1"]))
     story.append(Spacer(1, 20))
 
     for entry in summaries:
         case_number = extract_case_number(entry['title'])
-        story.append(Paragraph(f"<b>{case_number} – {entry['title']}</b>", styles["Heading2"]))
-        story.append(Paragraph(f"Veröffentlicht: {entry['published']}", styles["Normal"]))
+        clean_title = entry['title'].replace(case_number, "").strip()  # CHANGE: doppelte Aktenzeichen raus
+        story.append(Paragraph(f"<b>{case_number} – {clean_title}</b>", styles["Heading2"]))
+
+        # CHANGE: deutsches Datumsformat
+        try:
+            locale.setlocale(locale.LC_TIME, "de_DE.utf8")
+        except locale.Error:
+            locale.setlocale(locale.LC_TIME, "C")
+
+        pub_date = datetime.strptime(entry['published'], "%a, %d %b %Y %H:%M:%S %z")
+        pub_date_str = pub_date.strftime("%d.%m.%Y, %H:%M Uhr")
+        story.append(Paragraph(f"Veröffentlicht: {pub_date_str}", styles["Normal"]))
+
         story.append(Paragraph(f"Link: <a href='{entry['link']}'>{entry['link']}</a>", styles["Normal"]))
         story.append(Spacer(1, 10))
 
-        if entry.get("leitsaetze"):
-            story.append(Paragraph("<b>Leitsätze:</b>", styles["Heading3"]))
-            story.append(Paragraph(entry["leitsaetze"], styles["Block"]))
+        if entry.get("leitsatz"):
+            story.append(Paragraph("<b>Leitsätze:</b>", styles["Normal"]))
+            story.append(Paragraph(entry["leitsatz"], styles["Justify"]))
             story.append(Spacer(1, 10))
 
-        story.append(Paragraph(entry["summary"], styles["Block"]))
-        story.append(Spacer(1, 20))
+        if entry.get("summary"):
+            story.append(Paragraph("<b>Zusammenfassung:</b>", styles["Normal"]))
+            story.append(Paragraph(entry["summary"], styles["Justify"]))
+            story.append(Spacer(1, 20))
 
+    # ---- Technischer Hinweis ----
     story.append(PageBreak())
     story.append(Paragraph("<b>Technische Hinweise</b>", styles["Heading1"]))
     story.append(Spacer(1, 10))
-    story.append(Paragraph(f"Die Zusammenfassungen wurden automatisch mit dem Modell <b>{DEFAULT_MODEL}</b> erstellt.", styles["Normal"]))
+    story.append(Paragraph(f"Die Zusammenfassungen wurden automatisch mit dem Modell <b>{DEFAULT_MODEL}</b> erstellt (Fallback auf Mini/GPT-5 möglich).", styles["Normal"]))
     est_cost = estimate_cost(len(summaries), DEFAULT_MODEL)
     story.append(Spacer(1, 10))
     story.append(Paragraph(f"Geschätzte API-Kosten für diese Woche: ca. {est_cost} USD.", styles["Normal"]))
@@ -186,7 +178,6 @@ def create_weekly_pdf(summaries, filename):
     doc.build(story)
     print(f"📄 Wochen-PDF erstellt: {filename}")
 
-
 # -------------------
 # Hauptlogik
 # -------------------
@@ -194,35 +185,26 @@ def main():
     FEED_URL = "https://www.bundesfinanzhof.de/de/precedent.rss"
     feed = feedparser.parse(FEED_URL)
 
-    # --- ÄNDERUNG: TEST_MODE als true/false ---
-    test_mode = os.getenv("TEST_MODE", "false").lower() == "true"
-    if test_mode:
-        print("🧪 Testmodus aktiv: nur 1 Entscheidung wird verarbeitet")
-        entries = feed.entries[:1]
-    else:
-        entries = feed.entries
-
     summaries = []
-    for entry in entries:
-        pdf_link = get_pdf_link(entry.link)
+    for entry in feed.entries:
+        pdf_link = entry.link.replace("detail", "detail/pdf")
         pdf_path = download_pdf(pdf_link)
         raw_text = extract_text_from_pdf(pdf_path)
-        text = clean_text(raw_text)
-        summary = summarize_text(text)
-        leitsaetze = extract_leitsaetze(raw_text)
+
+        leitsatz = extract_leitsatz(raw_text)
+        summary = summarize_text(raw_text)
 
         summaries.append({
             "title": entry.title,
-            "published": format_date(entry.published),
+            "published": entry.published,
             "link": entry.link,
+            "leitsatz": leitsatz,
             "summary": summary,
-            "leitsaetze": leitsaetze,
         })
 
     os.makedirs("weekly_reports", exist_ok=True)
     filename = f"weekly_reports/BFH_Entscheidungen_KW{datetime.now().isocalendar()[1]}_{datetime.now().year}.pdf"
     create_weekly_pdf(summaries, filename)
-
 
 if __name__ == "__main__":
     main()
