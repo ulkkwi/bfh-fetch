@@ -66,9 +66,9 @@ def create_weekly_pdf(summaries, filename, model):
         story.append(Paragraph(f"Link: <a href='{entry['link']}'>{entry['link']}</a>", styles["Normal"]))
         story.append(Spacer(1, 10))
 
-        if entry["leitsaetze"]:
+        if entry["leitsatz"]:
             story.append(Paragraph("<b>Leitsätze:</b>", styles["Heading3"]))
-            story.append(Paragraph(hyphenate_text(entry["leitsaetze"]), german_style))
+            story.append(Paragraph(hyphenate_text(entry["leitsatz"]), german_style))
             story.append(Spacer(1, 10))
 
         story.append(Paragraph("<b>Kurz-Zusammenfassung:</b>", styles["Heading3"]))
