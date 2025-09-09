@@ -2,6 +2,7 @@ import os
 import re
 import requests
 import feedparser
+from urllib.parse import urljoin
 from datetime import datetime, date
 from PyPDF2 import PdfReader
 from reportlab.lib.pagesizes import A4
@@ -34,24 +35,65 @@ def extract_case_number(title: str) -> str:
     match = re.search(r"[A-Z]{1,3}\s?[A-Z]?\s?\d+/\d{2}", title)
     return match.group(0) if match else "Unbekannt"
 
-# CHANGE: robustes Ermitteln des echten PDF-Links inkl. dynamischem ?type=
+from urllib.parse import urljoin
+import re
+
 def build_bfh_pdf_url(detail_url: str) -> str:
     """
-    Holt den echten PDF-Link von der PDF-Übersichtsseite.
+    Ermittelt den echten PDF-Link direkt von der normalen Detailseite.
+    Sucht <a> mit /detail/pdf/... und behält den ?type=... Parameter bei.
     """
-    # /detail/... -> /detail/pdf/...
-    pdf_overview_url = detail_url.replace("/detail/", "/detail/pdf/")
-    html = requests.get(pdf_overview_url).text
-    soup = BeautifulSoup(html, "html.parser")
+    headers = {
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                      "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+    }
 
-    # dort steht ein <a href=".../detail/pdf/STRE...?...">PDF</a>
-    link_tag = soup.find("a", href=True, string="PDF")
-    if link_tag:
-        pdf_link = "https://www.bundesfinanzhof.de" + link_tag["href"]
-        print(f"🔗 Gefundener PDF-Link: {pdf_link}")  # Debug-Ausgabe
-        return pdf_link
+    # 1) Original-Detailseite laden (kein /pdf/ anhängen!)
+    resp = requests.get(detail_url, headers=headers, timeout=20)
+    resp.raise_for_status()
+    soup = BeautifulSoup(resp.text, "html.parser")
 
-    raise RuntimeError(f"Kein PDF-Link gefunden für {detail_url}")
+    # 2) Kandidaten sammeln: alle <a href> mit "/detail/pdf/"
+    candidates = []
+    for a in soup.find_all("a", href=True):
+        href = a["href"]
+        if "/detail/pdf/" in href:
+            candidates.append(a)
+
+    if not candidates:
+        # Optionaler Fallback: Seite /pdf/ probieren, falls BFH-Seitenstruktur abweicht
+        pdf_overview_url = detail_url.rstrip("/") + "/pdf/"
+        resp2 = requests.get(pdf_overview_url, headers=headers, timeout=20)
+        if resp2.ok:
+            soup2 = BeautifulSoup(resp2.text, "html.parser")
+            for a in soup2.find_all("a", href=True):
+                if "/detail/pdf/" in a["href"]:
+                    candidates.append(a)
+
+    if not candidates:
+        raise RuntimeError(f"Kein PDF-Link auf {detail_url} gefunden")
+
+    # 3) Bester Treffer: bevorzugt Download-Link mit Klasse/Titel/Text „PDF“ und vorhandenen ?type=
+    def score(a):
+        s = 0
+        cls = " ".join(a.get("class", []))
+        title = a.get("title", "") or ""
+        text = (a.get_text() or "").strip()
+        href = a["href"]
+        if "a-link--download" in cls:
+            s += 3
+        if "PDF" in title.upper():
+            s += 2
+        if "PDF" in text.upper():
+            s += 1
+        if "type=" in href:
+            s += 2
+        return s
+
+    best = max(candidates, key=score)
+    pdf_url = urljoin(detail_url, best["href"])  # relative -> absolute URL
+    print(f"🔗 Gefundener PDF-Link: {pdf_url}")
+    return pdf_url
 
 # BFH PDFs sauber benennen (ignoriere ?type=...)
 def download_pdf(url: str, folder="downloads"):
