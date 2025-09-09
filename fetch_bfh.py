@@ -191,6 +191,12 @@ def main():
     FEED_URL = "https://www.bundesfinanzhof.de/de/precedent.rss"
     feed = feedparser.parse(FEED_URL)
 
+    # CHANGE: Testmodus aus GitHub Actions
+    test_mode = os.getenv("TEST_MODE", "false").lower() == "true"
+    if test_mode:
+        print("🧪 Testmodus aktiv: nur 1 Entscheidung wird verarbeitet")
+        feed.entries = feed.entries[:1]
+
     summaries = []
     for entry in feed.entries:
         pdf_link = entry.link.replace("detail", "detail/pdf")  # CHANGE: BFH-Links auf PDF
