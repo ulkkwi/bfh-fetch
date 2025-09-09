@@ -11,20 +11,22 @@ from reportlab.lib.enums import TA_JUSTIFY
 try:
     locale.setlocale(locale.LC_TIME, "de_DE.UTF-8")
 except locale.Error:
-    locale.setlocale(locale.LC_TIME, "C")  # Fallback für CI/CD
+    # Fallback falls "de_DE.UTF-8" nicht verfügbar ist
+    locale.setlocale(locale.LC_TIME, "C")
+
 
 def create_weekly_pdf(summaries, filename, model):
     doc = SimpleDocTemplate(filename, pagesize=A4)
     styles = getSampleStyleSheet()
 
-    # Deutscher Blocksatz-Stil ohne Silbentrennung
+    # Deutscher Blocksatz-Stil, Silbentrennung deaktiviert
     german_style = ParagraphStyle(
         "German",
         parent=styles["Normal"],
         alignment=TA_JUSTIFY,
         leading=14,
         fontName="Helvetica",
-        wordWrap="LTR",  # verhindert erratische Silbentrennung
+        wordWrap="LTR",  # keine Silbentrennung
     )
 
     story = []
@@ -58,7 +60,7 @@ def create_weekly_pdf(summaries, filename, model):
     for entry in summaries:
         story.append(Paragraph(f"<b>{entry['title']}</b>", styles["Heading2"]))
 
-        # Datum der Veröffentlichung im deutschen Format
+        # Datum in deutschem Format dd.mm.yyyy, HH:MM Uhr
         try:
             pub_date = datetime.strptime(entry["published"], "%a, %d %b %Y %H:%M:%S %z")
             pub_date_str = pub_date.strftime("%d.%m.%Y, %H:%M Uhr")
@@ -74,10 +76,9 @@ def create_weekly_pdf(summaries, filename, model):
             story.append(Paragraph(entry["leitsatz"], german_style))
             story.append(Spacer(1, 10))
 
-        if entry.get("summary"):
-            story.append(Paragraph("<b>Kurz-Zusammenfassung:</b>", styles["Heading3"]))
-            story.append(Paragraph(entry["summary"], german_style))
-            story.append(Spacer(1, 20))
+        story.append(Paragraph("<b>Kurz-Zusammenfassung:</b>", styles["Heading3"]))
+        story.append(Paragraph(entry["summary"], german_style))
+        story.append(Spacer(1, 20))
 
     # ---- Technischer Hinweis ----
     story.append(PageBreak())
