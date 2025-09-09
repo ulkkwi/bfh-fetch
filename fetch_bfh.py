@@ -34,6 +34,25 @@ def extract_case_number(title: str) -> str:
     match = re.search(r"[A-Z]{1,3}\s?[A-Z]?\s?\d+/\d{2}", title)
     return match.group(0) if match else "Unbekannt"
 
+# CHANGE: robustes Ermitteln des echten PDF-Links inkl. dynamischem ?type=
+def build_bfh_pdf_url(detail_url: str) -> str:
+    """
+    Holt den echten PDF-Link von der PDF-Übersichtsseite.
+    """
+    # /detail/... -> /detail/pdf/...
+    pdf_overview_url = detail_url.replace("/detail/", "/detail/pdf/")
+    html = requests.get(pdf_overview_url).text
+    soup = BeautifulSoup(html, "html.parser")
+
+    # dort steht ein <a href=".../detail/pdf/STRE...?...">PDF</a>
+    link_tag = soup.find("a", href=True, string="PDF")
+    if link_tag:
+        pdf_link = "https://www.bundesfinanzhof.de" + link_tag["href"]
+        print(f"🔗 Gefundener PDF-Link: {pdf_link}")  # Debug-Ausgabe
+        return pdf_link
+
+    raise RuntimeError(f"Kein PDF-Link gefunden für {detail_url}")
+
 # BFH PDFs sauber benennen (ignoriere ?type=...)
 def download_pdf(url: str, folder="downloads"):
     os.makedirs(folder, exist_ok=True)
@@ -199,23 +218,15 @@ def main():
 
     summaries = []
     for entry in feed.entries:
-        # PDF-Detailseite statt HTML-Detailseite aufrufen
-        pdf_page_url = entry.link.replace("/detail/", "/detail/pdf/")
-        html_page = requests.get(pdf_page_url).text
-        soup = BeautifulSoup(html_page, "html.parser")
-
-        # Link mit ?type= extrahieren
-        pdf_tag = soup.find("a", href=True, string="PDF")
-        if pdf_tag:
-            pdf_link = "https://www.bundesfinanzhof.de" + pdf_tag["href"]
-            print(f"🔗 Gefundener PDF-Link: {pdf_link}")
-        else:
-            print(f"⚠️ Kein PDF-Link für {pdf_page_url} gefunden, überspringe...")
+        # NEU: robusten PDF-Link über Hilfsfunktion holen
+        try:
+            pdf_link = build_bfh_pdf_url(entry.link)
+        except Exception as e:
+            print(f"⚠️ Kein PDF-Link für {entry.link} gefunden: {e}, überspringe...")
             continue
 
         pdf_path = download_pdf(pdf_link)
         raw_text = extract_text_from_pdf(pdf_path)
-
 
         leitsatz = extract_leitsatz(raw_text)
         summary = summarize_text(raw_text)
