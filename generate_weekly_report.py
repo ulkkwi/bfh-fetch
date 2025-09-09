@@ -7,15 +7,24 @@ from reportlab.lib.units import cm
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_JUSTIFY
 import pyphen
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 
 # Deutsche Lokalisierung für Datum
-locale.setlocale(locale.LC_TIME, "de_DE.UTF-8")
+try:
+    locale.setlocale(locale.LC_TIME, "de_DE.UTF-8")
+except locale.Error:
+    locale.setlocale(locale.LC_TIME, "C")
 
 # Deutsche Silbentrennung
 dic = pyphen.Pyphen(lang="de_DE")
 
+# Unicode-fähige Schrift einbinden
+pdfmetrics.registerFont(TTFont("DejaVuSans", "DejaVuSans.ttf"))
+
 
 def hyphenate_text(text):
+    """Führt Silbentrennung mit normalen ASCII-Bindestrichen durch"""
     return " ".join(dic.inserted(w, hyphen="-") if len(w) > 12 else w for w in text.split())
 
 
@@ -23,13 +32,13 @@ def create_weekly_pdf(summaries, filename, model):
     doc = SimpleDocTemplate(filename, pagesize=A4)
     styles = getSampleStyleSheet()
 
-    # Deutscher Blocksatz-Stil
+    # Deutscher Blocksatz-Stil mit DejaVu Sans
     german_style = ParagraphStyle(
         "German",
         parent=styles["Normal"],
         alignment=TA_JUSTIFY,
         leading=14,
-        fontName="Helvetica",
+        fontName="DejaVuSans",
     )
 
     story = []
@@ -45,12 +54,12 @@ def create_weekly_pdf(summaries, filename, model):
 
     data = [
         ["Kalenderwoche:", f"{week} / {year}"],
-        ["Erstellt am:", today.strftime("%d. %B %Y")],
+        ["Erstellt am:", today.strftime("%d.%m.%Y")],
     ]
     table = Table(data, colWidths=[5*cm, 10*cm])
     table.setStyle(TableStyle([
         ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
-        ("FONT", (0, 0), (-1, -1), "Helvetica", 12),
+        ("FONT", (0, 0), (-1, -1), "DejaVuSans", 12),
         ("ALIGN", (0, 0), (-1, -1), "LEFT"),
     ]))
     story.append(table)
@@ -63,25 +72,26 @@ def create_weekly_pdf(summaries, filename, model):
     for entry in summaries:
         story.append(Paragraph(f"<b>{entry['title']}</b>", styles["Heading2"]))
 
-        # ✅ Deutsches Datumsformat für "Veröffentlicht"
+        # Deutsches Datumsformat
         try:
-            pub_date = datetime.strptime(entry['published'], "%a, %d %b %Y %H:%M:%S %z")
+            pub_date = datetime.strptime(entry["published"], "%a, %d %b %Y %H:%M:%S %z")
             pub_date_str = pub_date.strftime("%d.%m.%Y, %H:%M Uhr")
         except Exception:
-            pub_date_str = entry['published']
-        story.append(Paragraph(f"Veröffentlicht: {pub_date_str}", styles["Normal"]))
+            pub_date_str = entry["published"]
 
+        story.append(Paragraph(f"Veröffentlicht: {pub_date_str}", styles["Normal"]))
         story.append(Paragraph(f"Link: <a href='{entry['link']}'>{entry['link']}</a>", styles["Normal"]))
         story.append(Spacer(1, 10))
 
-        if entry["leitsatz"]:
+        if entry.get("leitsatz"):
             story.append(Paragraph("<b>Leitsätze:</b>", styles["Heading3"]))
             story.append(Paragraph(hyphenate_text(entry["leitsatz"]), german_style))
             story.append(Spacer(1, 10))
 
-        story.append(Paragraph("<b>Kurz-Zusammenfassung:</b>", styles["Heading3"]))
-        story.append(Paragraph(hyphenate_text(entry["summary"]), german_style))
-        story.append(Spacer(1, 20))
+        if entry.get("summary"):
+            story.append(Paragraph("<b>Kurz-Zusammenfassung:</b>", styles["Heading3"]))
+            story.append(Paragraph(hyphenate_text(entry["summary"]), german_style))
+            story.append(Spacer(1, 20))
 
     # ---- Technischer Hinweis ----
     story.append(PageBreak())
