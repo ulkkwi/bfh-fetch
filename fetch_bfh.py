@@ -199,20 +199,23 @@ def main():
 
     summaries = []
     for entry in feed.entries:
-        # HTML-Seite der Entscheidung abrufen
-        html_page = requests.get(entry.link).text
+        # PDF-Detailseite statt HTML-Detailseite aufrufen
+        pdf_page_url = entry.link.replace("/detail/", "/detail/pdf/")
+        html_page = requests.get(pdf_page_url).text
         soup = BeautifulSoup(html_page, "html.parser")
 
-        # PDF-Link mit ?type= suchen
+        # Link mit ?type= extrahieren
         pdf_tag = soup.find("a", href=True, string="PDF")
         if pdf_tag:
             pdf_link = "https://www.bundesfinanzhof.de" + pdf_tag["href"]
+            print(f"🔗 Gefundener PDF-Link: {pdf_link}")
         else:
-            print(f"⚠️ Kein PDF-Link für {entry.link} gefunden, überspringe...")
+            print(f"⚠️ Kein PDF-Link für {pdf_page_url} gefunden, überspringe...")
             continue
 
         pdf_path = download_pdf(pdf_link)
         raw_text = extract_text_from_pdf(pdf_path)
+
 
         leitsatz = extract_leitsatz(raw_text)
         summary = summarize_text(raw_text)
