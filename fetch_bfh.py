@@ -10,7 +10,8 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak, 
 from reportlab.lib import colors
 from reportlab.lib.units import cm
 from openai import OpenAI
-import locale  # CHANGE: für deutsches Datumsformat
+from bs4 import BeautifulSoup
+import locale
 
 # -------------------
 # Konfiguration
@@ -33,7 +34,7 @@ def extract_case_number(title: str) -> str:
     match = re.search(r"[A-Z]{1,3}\s?[A-Z]?\s?\d+/\d{2}", title)
     return match.group(0) if match else "Unbekannt"
 
-# CHANGE: BFH PDFs sauber benennen (ignoriere ?type=...)
+# BFH PDFs sauber benennen (ignoriere ?type=...)
 def download_pdf(url: str, folder="downloads"):
     os.makedirs(folder, exist_ok=True)
 
@@ -65,7 +66,7 @@ def extract_leitsatz(text: str) -> str:
         return m.group(1).strip()
     return ""
 
-# CHANGE: Fallback-Logik für Modelle
+# Fallback-Logik für Modelle
 def summarize_text(text: str) -> str:
     models = ["gpt-5-nano", "gpt-5-mini", "gpt-5"]
     for model in models:
@@ -111,7 +112,7 @@ def estimate_cost(num_decisions: int, model: str) -> float:
 def create_weekly_pdf(summaries, filename):
     doc = SimpleDocTemplate(filename, pagesize=A4)
     styles = getSampleStyleSheet()
-    styles.add(ParagraphStyle(name="Justify", parent=styles["Normal"], alignment=4))  # CHANGE: Blocksatz
+    styles.add(ParagraphStyle(name="Justify", parent=styles["Normal"], alignment=4))  
 
     story = []
 
@@ -144,10 +145,9 @@ def create_weekly_pdf(summaries, filename):
 
     for entry in summaries:
         case_number = extract_case_number(entry['title'])
-        clean_title = entry['title'].replace(case_number, "").strip()  # CHANGE: kein doppeltes Aktenzeichen
+        clean_title = entry['title'].replace(case_number, "").strip()  # kein doppeltes Aktenzeichen
         story.append(Paragraph(f"<b>{case_number} – {clean_title}</b>", styles["Heading2"]))
 
-        # CHANGE: deutsches Datumsformat
         try:
             locale.setlocale(locale.LC_TIME, "de_DE.utf8")
         except locale.Error:
@@ -199,7 +199,18 @@ def main():
 
     summaries = []
     for entry in feed.entries:
-        pdf_link = entry.link.replace("detail", "detail/pdf")  # CHANGE: BFH-Links auf PDF
+        # HTML-Seite der Entscheidung abrufen
+        html_page = requests.get(entry.link).text
+        soup = BeautifulSoup(html_page, "html.parser")
+
+        # PDF-Link mit ?type= suchen
+        pdf_tag = soup.find("a", href=True, string="PDF")
+        if pdf_tag:
+            pdf_link = "https://www.bundesfinanzhof.de" + pdf_tag["href"]
+        else:
+            print(f"⚠️ Kein PDF-Link für {entry.link} gefunden, überspringe...")
+            continue
+
         pdf_path = download_pdf(pdf_link)
         raw_text = extract_text_from_pdf(pdf_path)
 
