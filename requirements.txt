@@ -1,4 +1,5 @@
 pyphen
+tiktoken
 feedparser
 requests
 beautifulsoup4
