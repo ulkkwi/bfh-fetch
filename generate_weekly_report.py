@@ -6,17 +6,30 @@ from reportlab.lib import colors
 from reportlab.lib.units import cm
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_JUSTIFY
+# --- safe font registration (replace previous block) ---
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 import os
 
-# DejaVuSans für Umlaute und Bindestriche registrieren
 font_path = os.path.join(os.path.dirname(__file__), "fonts", "DejaVuSans.ttf")
+FONT_NAME = "DejaVuSans"
+font_registered = False
+
 if os.path.exists(font_path):
-    pdfmetrics.registerFont(TTFont("DejaVuSans", font_path))
-else:
-    # Fallback, falls Font nicht vorhanden
-    pdfmetrics.registerFont(TTFont("DejaVuSans", "DejaVuSans.ttf"))
+    try:
+        pdfmetrics.registerFont(TTFont(FONT_NAME, font_path))
+        font_registered = True
+    except Exception as e:
+        print(f"⚠️ Fehler beim Registrieren der lokalen DejaVuSans.ttf: {e}")
+
+if not font_registered:
+    # Versuche Fallback, aber nur wenn vorhanden; bei Fehlschlag: benutze Helvetica später
+    try:
+        pdfmetrics.registerFont(TTFont(FONT_NAME, "DejaVuSans.ttf"))
+        font_registered = True
+    except Exception:
+        print("ℹ️ Kein DejaVuSans verfügbar – verwende Fallback-Schriftarten (Helvetica).")
+# --- end safe font registration ---
 
 # Deutsche Lokalisierung für Datum
 try:
