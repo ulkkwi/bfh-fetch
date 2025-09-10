@@ -31,7 +31,7 @@ jobs:
 
       - name: Run tests
         run: |
-          python tests/test_generate_weekly_report.py
+          PYTHONPATH=. python tests/test_generate_weekly_report.py
 
       - name: Upload generated PDF
         uses: actions/upload-artifact@v4
