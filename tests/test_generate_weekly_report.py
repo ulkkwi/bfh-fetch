@@ -1,8 +1,15 @@
 import os
+import sys
 from datetime import datetime
+
+# Repo-Root in den Python-Pfad aufnehmen
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+
 from generate_weekly_report import create_weekly_pdf
 
+
 def test_create_weekly_pdf():
+    # Beispiel-Eintrag
     summaries = [
         {
             "title": "VI R 4/23 – Einkommensteuer: Dienstwagenbesteuerung",
@@ -13,10 +20,7 @@ def test_create_weekly_pdf():
         }
     ]
 
-    outdir = "tests"
-    os.makedirs(outdir, exist_ok=True)
-
-    filename = os.path.join(outdir, f"test_weekly_report_{datetime.now().strftime('%Y%m%d')}.pdf")
+    filename = os.path.join("tests", f"test_weekly_report_{datetime.now().strftime('%Y%m%d')}.pdf")
     create_weekly_pdf(summaries, filename, model="gpt-5-nano")
 
     assert os.path.exists(filename), "PDF wurde nicht erstellt!"
