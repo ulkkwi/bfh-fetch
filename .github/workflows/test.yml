@@ -19,6 +19,14 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Install German locale
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y locales
+          sudo locale-gen de_DE.UTF-8
+          sudo update-locale LANG=de_DE.UTF-8
+          export LANG=de_DE.UTF-8
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
