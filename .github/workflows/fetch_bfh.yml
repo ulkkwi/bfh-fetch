@@ -46,7 +46,7 @@ jobs:
           username: ${{ secrets.EMAIL_USER }}
           password: ${{ secrets.EMAIL_PASS }}
           subject: "BFH Wochenbericht"
-          to: ulrich.wilke@wieselukas.de   # 👉 Empfängeradresse hier anpassen
+          to: ${{ secrets.EMAIL_TO }}
           from: ${{ secrets.EMAIL_USER }}
           body: |
             Guten Tag,
