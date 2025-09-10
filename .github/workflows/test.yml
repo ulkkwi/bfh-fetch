@@ -37,4 +37,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: test
-          path: weekly_reports/*.pdf
+          path: test_weekly_report_*.pdf
