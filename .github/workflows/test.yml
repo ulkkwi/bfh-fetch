@@ -37,4 +37,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: test
-          path: test_weekly_report_*.pdf
+          path: tests/test_weekly_report_*.pdf
+          if-no-files-found: warn
