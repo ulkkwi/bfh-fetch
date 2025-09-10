@@ -30,12 +30,20 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run tests
+        run: python tests/test_generate_weekly_report.py
+
+      - name: Show folder contents (root + tests)
         run: |
-          PYTHONPATH=. python tests/test_generate_weekly_report.py
+          echo "Root-Verzeichnis:"
+          ls -lh
+          echo "Tests-Verzeichnis:"
+          ls -lh tests
 
       - name: Upload generated PDF
         uses: actions/upload-artifact@v4
         with:
           name: test
-          path: tests/test_weekly_report_*.pdf
+          path: |
+            tests/test_weekly_report_*.pdf
+            test_weekly_report_*.pdf
           if-no-files-found: warn
