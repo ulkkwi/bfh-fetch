@@ -1,15 +1,23 @@
-# test_generate_weekly_report.py
+import os
+from datetime import datetime
+
 from generate_weekly_report import create_weekly_pdf
 
-dummy_summaries = [
-    {
-        "title": "VI R 4/23 – Steuerliche Behandlung von Kryptowährungen",
-        "published": "Thu, 04 Sep 2025 10:00:02 +0200",
-        "link": "https://www.bundesfinanzhof.de/de/entscheidung/entscheidungen-online/detail/STRE202510171/",
-        "leitsatz": "Einnahmen aus der Veräußerung von Kryptowährungen sind steuerpflichtig, wenn die Veräußerung innerhalb eines Jahres nach Anschaffung erfolgt.",
-        "summary": "Der Bundesfinanzhof stellt klar, dass Kryptowährungen als Wirtschaftsgüter einzustufen sind. Gewinne aus kurzfristigem Handel sind damit steuerpflichtig. Eine Ausnahme gilt nur bei Haltefristen über einem Jahr."
-    }
-]
+def test_create_weekly_pdf():
+    # Beispiel-Eintrag
+    summaries = [
+        {
+            "title": "VI R 4/23 – Einkommensteuer: Dienstwagenbesteuerung",
+            "published": "Thu, 04 Sep 2025 10:00:02 +0200",
+            "link": "https://www.bundesfinanzhof.de/de/entscheidung/entscheidungen-online/detail/STRE202510171/",
+            "leitsatz": "Bei der Überlassung eines Dienstwagens ...",
+            "summary": "Der BFH entschied, dass die private Nutzung eines Dienstwagens ..."
+        }
+    ]
 
-if __name__ == "__main__":
-    create_weekly_pdf(dummy_summaries, "test_weekly_report.pdf", model="gpt-5-nano")
+    filename = f"test_weekly_report_{datetime.now().strftime('%Y%m%d')}.pdf"
+    create_weekly_pdf(summaries, filename, model="gpt-5-nano")
+
+    assert os.path.exists(filename), "PDF wurde nicht erstellt!"
+    assert os.path.getsize(filename) > 1000, "PDF ist zu klein, vermutlich leer."
+    print(f"✅ Test-PDF erstellt: {filename}")
