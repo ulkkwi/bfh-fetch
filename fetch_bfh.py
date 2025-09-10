@@ -139,10 +139,14 @@ def extract_text_from_pdf(path: str) -> str:
     return text
 
 def extract_leitsatz(text: str) -> str:
-    """Schneidet die Leitsätze bis vor 'Tenor' heraus"""
-    m = re.search(r"Leitsätze:(.*?)(?=Tenor)", text, re.S | re.I)
+    """
+    Schneidet die Leitsätze bis vor 'Tenor' heraus.
+    Erkennt 'Leitsatz' oder 'Leitsätze', mit oder ohne Doppelpunkt.
+    """
+    # Suche nach 'Leitsatz' oder 'Leitsätze' (ggf. mit : oder ohne)
+    m = re.search(r"(Leitsätze?|Leitsatz)\s*:?(.*?)(?=Tenor)", text, re.S | re.I)
     if m:
-        return m.group(1).strip()
+        return m.group(2).strip()
     return ""
 
 # Fallback-Logik für Modelle mit Chunking
