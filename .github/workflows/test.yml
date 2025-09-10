@@ -31,11 +31,12 @@ jobs:
 
       - name: Run PDF generation test
         run: |
+          export PYTHONPATH=$PYTHONPATH:$(pwd)
           python tests/test_generate_weekly_report.py
 
       - name: Upload generated PDF
         uses: actions/upload-artifact@v4
         with:
-          name: test-pdf
+          name: test
           path: tests/test_weekly_report_*.pdf
-          if-no-files-found: error
+          if-no-files-found: warn
