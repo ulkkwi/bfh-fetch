@@ -18,8 +18,17 @@ def main():
             "title": "VI R 4/23 – Einkommensteuer: Dienstwagenbesteuerung",
             "published": "Thu, 04 Sep 2025 10:00:02 +0200",
             "link": "https://www.bundesfinanzhof.de/de/entscheidung/entscheidungen-online/detail/STRE202510171/",
-            "leitsatz": "Bei der Überlassung eines Dienstwagens ...",
-            "summary": "Der BFH entschied, dass die private Nutzung eines Dienstwagens ..."
+            "leitsatz": "Bei der Überlassung eines Dienstwagens im Rahmen einer komplexen Dienstwagenüberlassungsregelung sind die tatsächlichen Nutzungsumstände maßgeblich.",
+            "summary": (
+                "Der BFH entschied in dieser komplexen Rechtssache, dass die Dienstwagenüberlassungsregelung "
+                "unter den gegebenen Umständen nicht zu einer zusätzlichen steuerpflichtigen Einnahme führt. "
+                "Insbesondere hat das Gericht klargestellt, dass die Abgrenzung zwischen beruflicher und privater "
+                "Nutzung anhand der tatsächlichen Nutzungsvorgaben und der vertraglichen Vereinbarungen vorzunehmen "
+                "ist. Die Entscheidung enthält zudem umfangreiche Ausführungen zur Verhältnismäßigkeit der Nachweisanforderungen "
+                "sowie zur Anwendbarkeit spezieller steuerlicher Begünstigungen. Die ausführliche Argumentation "
+                "behandelt dabei auch Themen wie Fahrtenbuchführungspflichten und die steuerliche Bewertung von Sonderausstattungen, "
+                "die in der Praxis häufig zu Fragen führen."
+            )
         }
     ]
 
@@ -35,7 +44,6 @@ def main():
         traceback.print_exc()
         print("❗ Erzeuge eine kleine Placeholder-PDF zur Fehler-Analyse (damit Upload-Schritt etwas findet).")
         try:
-            # Minimal-PDF fallback (sichert Artefakt)
             from reportlab.lib.pagesizes import A4
             from reportlab.pdfgen import canvas
             c = canvas.Canvas(filename, pagesize=A4)
@@ -46,7 +54,6 @@ def main():
         except Exception:
             print("⚠️ Fallback-PDF konnte nicht erstellt werden.")
             traceback.print_exc()
-            # Exit with failure, so workflow stops
             sys.exit(1)
 
     # Verify
