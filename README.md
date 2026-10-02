@@ -8,7 +8,7 @@ Das Wochen-PDF wird **automatisch per E-Mail** versendet (SMTP).
 
 ## ✨ Features
 - Abruf der neuesten BFH-Entscheidungen via RSS
-- PDF-Download & Textextraktion
+- Textextraktion
 - Narrative 2-Absatz-Zusammenfassung per OpenAI-API (Modell frei wählbar via ENV `MODEL`)
 - Wöchentliches PDF mit Titelseite (formal), Aktenzeichen vor jedem Titel
 - „Technische Hinweise“: verwendetes Modell + geschätzte API-Kosten (pro Woche)
