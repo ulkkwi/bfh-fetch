@@ -11,7 +11,8 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak, Table, TableStyle
 from reportlab.lib import colors
 from reportlab.lib.units import cm
-from openai import OpenAI
+import sys
+from openai import OpenAI, APIError
 from bs4 import BeautifulSoup
 import locale
 from generate_weekly_report import create_weekly_pdf
@@ -28,6 +29,20 @@ PRICES = {
     "gpt-5-mini": {"input": 0.25, "output": 2.00},
     "gpt-5": {"input": 1.25, "output": 10.00},
 }
+
+QUOTA_MESSAGE = (
+    "Keine Zusammenfassung erstellt: Das Guthaben für die OpenAI-API ist aufgebraucht. "
+    "Bitte unter https://platform.openai.com/settings/organization/billing/ aufladen."
+)
+
+class QuotaExceededError(Exception):
+    """Das OpenAI-Guthaben ist aufgebraucht, weitere Aufrufe sind zwecklos."""
+
+def is_quota_error(e: Exception) -> bool:
+    return isinstance(e, APIError) and (
+        e.code in ("insufficient_quota", "credit_balance_exhausted")
+        or e.type == "insufficient_quota"
+    )
 
 # -------------------
 # Hilfsfunktionen
@@ -200,6 +215,8 @@ def summarize_text(text: str) -> str:
                         print(f"⚠️ Modell {model} hat nichts geliefert, versuche nächstes...")
 
             except Exception as e:
+                if is_quota_error(e):
+                    raise QuotaExceededError(str(e)) from e
                 print(f"⚠️ Fehler mit Modell {model}: {e}")
 
     # Endzusammenfassung aus allen Chunk-Zusammenfassungen
@@ -238,6 +255,8 @@ def summarize_text(text: str) -> str:
                 return content
 
         except Exception as e:
+            if is_quota_error(e):
+                raise QuotaExceededError(str(e)) from e
             print(f"⚠️ Fehler bei Endzusammenfassung mit Modell {model}: {e}")
 
     return "⚠️ Keine Antwort vom Modell erhalten."
@@ -267,6 +286,7 @@ def main():
         feed.entries = feed.entries[:1]
 
     summaries = []
+    quota_exceeded = False
     for entry in feed.entries:
         # NEU: robusten PDF-Link über Hilfsfunktion holen
         try:
@@ -279,7 +299,15 @@ def main():
         raw_text = extract_text_from_pdf(pdf_path)
 
         leitsatz = extract_leitsatz(raw_text)
-        summary = summarize_text(raw_text)
+        if quota_exceeded:
+            summary = QUOTA_MESSAGE
+        else:
+            try:
+                summary = summarize_text(raw_text)
+            except QuotaExceededError as e:
+                print(f"❌ OpenAI-Guthaben aufgebraucht, keine weiteren API-Aufrufe: {e}")
+                quota_exceeded = True
+                summary = QUOTA_MESSAGE
 
         summaries.append({
             "title": entry.title,
@@ -291,7 +319,16 @@ def main():
 
     os.makedirs("weekly_reports", exist_ok=True)
     filename = f"weekly_reports/BFH_Entscheidungen_KW{datetime.now().isocalendar()[1]}_{datetime.now().year}.pdf"
-    create_weekly_pdf(summaries, filename, DEFAULT_MODEL)
+    warning = QUOTA_MESSAGE if quota_exceeded else None
+    create_weekly_pdf(summaries, filename, DEFAULT_MODEL, warning=warning)
+
+    if quota_exceeded:
+        # Hinweis für den Mail-Schritt im Workflow
+        github_output = os.getenv("GITHUB_OUTPUT")
+        if github_output:
+            with open(github_output, "a") as f:
+                f.write("warning=OpenAI-Guthaben aufgebraucht, Zusammenfassungen fehlen\n")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

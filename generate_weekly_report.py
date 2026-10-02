@@ -66,7 +66,7 @@ def hyphenate_text(text: str, min_len: int = 12) -> str:
                 out.append(hyphenate_word(token))
     return "".join(out)
 
-def create_weekly_pdf(summaries, filename, model):
+def create_weekly_pdf(summaries, filename, model, warning=None):
     doc = SimpleDocTemplate(filename, pagesize=A4,
                             rightMargin=2*cm, leftMargin=2*cm,
                             topMargin=2*cm, bottomMargin=2*cm)
@@ -106,6 +106,18 @@ def create_weekly_pdf(summaries, filename, model):
         ("ALIGN", (0, 0), (-1, -1), "LEFT"),
     ]))
     story.append(table)
+    if warning:
+        warning_style = ParagraphStyle(
+            "Warning",
+            parent=styles["Normal"],
+            fontName=font_to_use,
+            textColor=colors.red,
+            borderColor=colors.red,
+            borderWidth=1,
+            borderPadding=8,
+        )
+        story.append(Spacer(1, 2 * cm))
+        story.append(Paragraph(f"Hinweis: {warning}", warning_style))
     story.append(PageBreak())
 
     # ---- Inhalt ----
