@@ -1,6 +1,6 @@
 # BFH-Entscheidungen – Automatisierte Zusammenfassungen & Wochenbericht (PDF)
 
-Dieses Projekt ruft wöchentlich die neuesten Entscheidungen des **Bundesfinanzhofs (BFH)** ab, lädt die Volltext-PDFs herunter, extrahiert den Text und erzeugt **narrative Kurzfassungen** über die OpenAI-API.  
+Dieses Projekt ruft wöchentlich die neuesten Entscheidungen des **Bundesfinanzhofs (BFH)** ab, extrahiert den Text und erzeugt **narrative Kurzfassungen** über die OpenAI-API.  
 Zum Schluss werden alle Entscheidungen der Woche in einem **formalen Wochen-PDF** (Titelseite inkl. Kalenderwoche/Jahr, Aktenzeichen je Fall, technischer Hinweisblock mit Modellname & Kostenabschätzung) zusammengeführt.  
 Das Wochen-PDF wird **automatisch per E-Mail** versendet (SMTP).
 
