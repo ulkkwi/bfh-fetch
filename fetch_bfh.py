@@ -1,27 +1,25 @@
 import os
 import re
-import requests
-import feedparser
-import tiktoken
-from urllib.parse import urljoin
-from datetime import datetime, date
-from PyPDF2 import PdfReader
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak, Table, TableStyle
-from reportlab.lib import colors
-from reportlab.lib.units import cm
 import sys
-from openai import OpenAI, APIError
+from datetime import datetime
+from zoneinfo import ZoneInfo
+from urllib.parse import urljoin
+
+import feedparser
+import requests
 from bs4 import BeautifulSoup
-import locale
+from openai import OpenAI, APIError, AuthenticationError
+from pypdf import PdfReader
+
 from generate_weekly_report import create_weekly_pdf
 
 # -------------------
 # Konfiguration
 # -------------------
-client = OpenAI()
-DEFAULT_MODEL = os.getenv("MODEL", "gpt-5-nano")  # Modell aus Umgebungsvariable oder Default
+DEFAULT_MODEL = os.getenv("MODEL", "gpt-5-nano")  # Startmodell aus Umgebungsvariable oder Default
+
+# Reihenfolge der Ausweichmodelle, falls ein Modell keine Antwort liefert
+FALLBACK_MODELS = ["gpt-5-nano", "gpt-5-mini", "gpt-5"]
 
 # Preise pro 1M Tokens (USD) – Stand 2025
 PRICES = {
@@ -30,13 +28,48 @@ PRICES = {
     "gpt-5": {"input": 1.25, "output": 10.00},
 }
 
+# Obergrenze für den Volltext pro Entscheidung (ca. 75.000 Tokens).
+# Die Modelle verarbeiten deutlich mehr, die Grenze schützt nur vor Ausreißern.
+MAX_INPUT_CHARS = 300_000
+
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+}
+
+SYSTEM_PROMPT = (
+    "Du bist ein juristischer Assistent. "
+    "Fasse die folgende Entscheidung des Bundesfinanzhofs in EINEM klaren Absatz zusammen. "
+    "Konzentriere dich auf den Kern der Entscheidung. "
+    "Maximal 5 Sätze, keine Fußnoten, keine Zitate."
+)
+
 QUOTA_MESSAGE = (
     "Keine Zusammenfassung erstellt: Das Guthaben für die OpenAI-API ist aufgebraucht. "
     "Bitte unter https://platform.openai.com/settings/organization/billing/ aufladen."
 )
+AUTH_MESSAGE = (
+    "Keine Zusammenfassung erstellt: Der OpenAI-API-Schlüssel ist ungültig oder fehlt. "
+    "Bitte das Secret OPENAI_API_KEY im GitHub-Repository prüfen."
+)
 
-class QuotaExceededError(Exception):
-    """Das OpenAI-Guthaben ist aufgebraucht, weitere Aufrufe sind zwecklos."""
+_client = None
+
+def get_client() -> OpenAI:
+    """Erzeugt den OpenAI-Client erst bei Bedarf.
+    Vorübergehende Fehler (Netzwerk, Überlast) wiederholt der Client selbst
+    mit demselben Modell, bevor auf ein anderes Modell ausgewichen wird."""
+    global _client
+    if _client is None:
+        _client = OpenAI(max_retries=4, timeout=300)
+    return _client
+
+class FatalAPIError(Exception):
+    """Die API ist nicht nutzbar (kein Guthaben, ungültiger Schlüssel), weitere Aufrufe sind zwecklos."""
+    def __init__(self, message: str, reason: str, notice: str):
+        super().__init__(message)
+        self.reason = reason  # Kurztext für den Mail-Betreff
+        self.notice = notice  # Hinweis im PDF
 
 def is_quota_error(e: Exception) -> bool:
     return isinstance(e, APIError) and (
@@ -44,64 +77,75 @@ def is_quota_error(e: Exception) -> bool:
         or e.type == "insufficient_quota"
     )
 
+def model_order(start_model: str) -> list[str]:
+    """Startmodell zuerst, danach nur die größeren Ausweichmodelle."""
+    if start_model in FALLBACK_MODELS:
+        return FALLBACK_MODELS[FALLBACK_MODELS.index(start_model):]
+    return [start_model] + FALLBACK_MODELS
+
+class UsageTracker:
+    """Sammelt die tatsächlich verwendeten Modelle und Token für die Kostenangabe."""
+    def __init__(self):
+        self.tokens = {}  # Modell -> [input, output]
+
+    def add(self, model: str, usage):
+        if usage is None:
+            return
+        t = self.tokens.setdefault(model, [0, 0])
+        t[0] += usage.prompt_tokens or 0
+        t[1] += usage.completion_tokens or 0
+
+    @property
+    def models(self) -> list[str]:
+        return list(self.tokens)
+
+    def cost(self) -> float | None:
+        """Kosten in USD, None wenn für ein Modell kein Preis hinterlegt ist."""
+        total = 0.0
+        for model, (tin, tout) in self.tokens.items():
+            if model not in PRICES:
+                return None
+            total += tin * PRICES[model]["input"] / 1_000_000
+            total += tout * PRICES[model]["output"] / 1_000_000
+        return total
+
 # -------------------
 # Hilfsfunktionen
 # -------------------
-def chunk_text_by_tokens(text: str, model: str = "gpt-5-nano", max_tokens: int = 800) -> list[str]:
-    """
-    Teilt den Text in Chunks, die vom Token-Limit des Modells passen.
-    Standardmäßig ca. 2000 Tokens pro Chunk (Platz lassen für Prompt/Antwort).
-    """
-    encoding = tiktoken.encoding_for_model(model)
-    tokens = encoding.encode(text)
+CASE_NUMBER_RE = re.compile(r"\b(?:[IVX]{1,4}|GrS)\s+[A-Z]{1,2}\s+\d+/\d{2}\b")
 
-    chunks = []
-    for i in range(0, len(tokens), max_tokens):
-        chunk_tokens = tokens[i:i + max_tokens]
-        chunk_text = encoding.decode(chunk_tokens)
-        chunks.append(chunk_text)
+def extract_case_number(text: str) -> str:
+    """Extrahiert das Aktenzeichen (z. B. VI R 4/23), leer wenn keins gefunden"""
+    match = CASE_NUMBER_RE.search(text)
+    return match.group(0) if match else ""
 
-    return chunks
-
-def extract_case_number(title: str) -> str:
-    """Extrahiert das Aktenzeichen (z. B. VI R 4/23) aus dem Titel"""
-    match = re.search(r"[A-Z]{1,3}\s?[A-Z]?\s?\d+/\d{2}", title)
-    return match.group(0) if match else "Unbekannt"
-
-from urllib.parse import urljoin
-import re
+def title_with_case_number(title: str, pdf_text: str) -> str:
+    """Stellt das Aktenzeichen aus dem PDF vor den Titel, falls es dort noch fehlt."""
+    if extract_case_number(title):
+        return title
+    case_number = extract_case_number(pdf_text[:3000])
+    return f"{case_number} – {title}" if case_number else title
 
 def build_bfh_pdf_url(detail_url: str) -> str:
     """
     Ermittelt den echten PDF-Link direkt von der normalen Detailseite.
     Sucht <a> mit /detail/pdf/... und behält den ?type=... Parameter bei.
     """
-    headers = {
-        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                      "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
-    }
-
     # 1) Original-Detailseite laden (kein /pdf/ anhängen!)
-    resp = requests.get(detail_url, headers=headers, timeout=20)
+    resp = requests.get(detail_url, headers=HEADERS, timeout=20)
     resp.raise_for_status()
     soup = BeautifulSoup(resp.text, "html.parser")
 
     # 2) Kandidaten sammeln: alle <a href> mit "/detail/pdf/"
-    candidates = []
-    for a in soup.find_all("a", href=True):
-        href = a["href"]
-        if "/detail/pdf/" in href:
-            candidates.append(a)
+    candidates = [a for a in soup.find_all("a", href=True) if "/detail/pdf/" in a["href"]]
 
     if not candidates:
         # Optionaler Fallback: Seite /pdf/ probieren, falls BFH-Seitenstruktur abweicht
         pdf_overview_url = detail_url.rstrip("/") + "/pdf/"
-        resp2 = requests.get(pdf_overview_url, headers=headers, timeout=20)
+        resp2 = requests.get(pdf_overview_url, headers=HEADERS, timeout=20)
         if resp2.ok:
             soup2 = BeautifulSoup(resp2.text, "html.parser")
-            for a in soup2.find_all("a", href=True):
-                if "/detail/pdf/" in a["href"]:
-                    candidates.append(a)
+            candidates = [a for a in soup2.find_all("a", href=True) if "/detail/pdf/" in a["href"]]
 
     if not candidates:
         raise RuntimeError(f"Kein PDF-Link auf {detail_url} gefunden")
@@ -138,7 +182,7 @@ def download_pdf(url: str, folder="downloads"):
 
     filename = os.path.join(folder, basename)
 
-    r = requests.get(url)
+    r = requests.get(url, headers=HEADERS, timeout=60)
     r.raise_for_status()
     with open(filename, "wb") as f:
         f.write(r.content)
@@ -146,131 +190,63 @@ def download_pdf(url: str, folder="downloads"):
     return filename
 
 def extract_text_from_pdf(path: str) -> str:
-    text = ""
-    with open(path, "rb") as f:
-        reader = PdfReader(f)
-        for page in reader.pages:
-            text += page.extract_text() or ""
-    return text
+    reader = PdfReader(path)
+    return "".join(page.extract_text() or "" for page in reader.pages)
 
 def extract_leitsatz(text: str) -> str:
     """
     Schneidet die Leitsätze bis vor 'Tenor' heraus.
     Erkennt 'Leitsatz' oder 'Leitsätze', mit oder ohne Doppelpunkt.
     """
-    # Suche nach 'Leitsatz' oder 'Leitsätze' (ggf. mit : oder ohne)
-    m = re.search(r"(Leitsätze?|Leitsatz)\s*:?(.*?)(?=Tenor)", text, re.S | re.I)
-    if m:
-        return m.group(2).strip()
-    return ""
+    m = re.search(r"Leits(?:atz|ätze)\s*:?(.*?)(?=Tenor)", text, re.S | re.I)
+    return m.group(1).strip() if m else ""
 
-# Fallback-Logik für Modelle mit Chunking
-def summarize_text(text: str) -> str:
+def summarize_text(text: str, tracker: UsageTracker) -> str:
     """
-    Teilt den Text in Chunks und fasst ihn zusammen.
-    Antworten mit finish_reason="length" werden trotzdem gespeichert,
-    damit keine Informationen verloren gehen.
+    Fasst den Volltext mit einem einzigen Aufruf zusammen.
+    Liefert ein Modell nichts, wird das nächstgrößere versucht.
+    Antworten mit finish_reason="length" werden trotzdem übernommen.
     """
-    # Text in tokenbasierte Chunks teilen
-    chunks = chunk_text_by_tokens(text, model="gpt-5-nano", max_tokens=1000)
-    chunk_summaries = []
+    text = text[:MAX_INPUT_CHARS]
 
-    for i, chunk in enumerate(chunks, start=1):
-        for model in ["gpt-5-nano", "gpt-5-mini", "gpt-5"]:
-            try:
-                print(f"➡️ Versuche Modell: {model}, Chunk {i}/{len(chunks)}")
-
-                response = client.chat.completions.create(
-                    model=model,
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": (
-                                "Du bist ein juristischer Assistent. "
-                                "Fasse den folgenden Text präzise zusammen. "
-                                "Konzentriere dich auf den Kern der Entscheidung."
-                            ),
-                        },
-                        {"role": "user", "content": chunk},
-                    ],
-                    max_completion_tokens=3000,
-                )
-
-                finish_reason = response.choices[0].finish_reason
-                content = response.choices[0].message.content.strip()
-
-                print(f"🔎 Finish reason: {finish_reason}")
-
-                if content:
-                    if finish_reason == "length":
-                        print("✂️ Antwort war abgeschnitten, Teiltext wird trotzdem übernommen.")
-                    chunk_summaries.append(content)
-                    break  # nächstes Chunk
-                else:
-                    if finish_reason == "length":
-                        print("✂️ Modell hat Text abgeschnitten, aber nichts zurückgegeben – Platzhalter eingefügt.")
-                        chunk_summaries.append("[Antwort abgeschnitten]")
-                        break
-                    else:
-                        print(f"⚠️ Modell {model} hat nichts geliefert, versuche nächstes...")
-
-            except Exception as e:
-                if is_quota_error(e):
-                    raise QuotaExceededError(str(e)) from e
-                print(f"⚠️ Fehler mit Modell {model}: {e}")
-
-    # Endzusammenfassung aus allen Chunk-Zusammenfassungen
-    if not chunk_summaries:
-        return "⚠️ Keine Antwort vom Modell erhalten."
-
-    combined = "\n".join(chunk_summaries)
-
-    for model in ["gpt-5-nano", "gpt-5-mini", "gpt-5"]:
+    for model in model_order(DEFAULT_MODEL):
         try:
-            print(f"➡️ Endzusammenfassung mit Modell: {model}")
-            response = client.chat.completions.create(
+            print(f"➡️ Zusammenfassung mit Modell: {model}")
+            response = get_client().chat.completions.create(
                 model=model,
                 messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "Du bist ein juristischer Assistent. "
-                            "Fasse die folgenden Teilergebnisse zu EINEM klaren Absatz zusammen. "
-                            "Maximal 5 Sätze, keine Fußnoten, keine Zitate."
-                        ),
-                    },
-                    {"role": "user", "content": combined},
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": text},
                 ],
-                max_completion_tokens=1500,
+                reasoning_effort="low",
+                max_completion_tokens=4000,
             )
+            tracker.add(model, response.usage)
 
             finish_reason = response.choices[0].finish_reason
-            content = response.choices[0].message.content.strip()
-
-            print(f"🔎 Finish reason (Ende): {finish_reason}")
+            content = (response.choices[0].message.content or "").strip()
+            print(f"🔎 Finish reason: {finish_reason}")
 
             if content:
                 if finish_reason == "length":
-                    print("✂️ Endzusammenfassung wurde abgeschnitten, Teiltext wird übernommen.")
+                    print("✂️ Antwort war abgeschnitten, Teiltext wird übernommen.")
                 return content
+            print(f"⚠️ Modell {model} hat nichts geliefert, versuche nächstes...")
 
+        except AuthenticationError as e:
+            raise FatalAPIError(str(e), "OpenAI-API-Schlüssel ungültig", AUTH_MESSAGE) from e
         except Exception as e:
             if is_quota_error(e):
-                raise QuotaExceededError(str(e)) from e
-            print(f"⚠️ Fehler bei Endzusammenfassung mit Modell {model}: {e}")
+                raise FatalAPIError(str(e), "OpenAI-Guthaben aufgebraucht", QUOTA_MESSAGE) from e
+            print(f"⚠️ Fehler mit Modell {model}: {e}")
 
     return "⚠️ Keine Antwort vom Modell erhalten."
 
-def estimate_cost(num_decisions: int, model: str) -> float:
-    """Schätzt die Kosten pro Woche (USD)"""
-    if model not in PRICES:
-        return 0.0
-    input_tokens = num_decisions * 30000
-    output_tokens = num_decisions * 500
-    price_in = PRICES[model]["input"] / 1_000_000
-    price_out = PRICES[model]["output"] / 1_000_000
-    cost = input_tokens * price_in + output_tokens * price_out
-    return round(cost, 4)
+def write_github_output(key: str, value: str):
+    github_output = os.getenv("GITHUB_OUTPUT")
+    if github_output:
+        with open(github_output, "a") as f:
+            f.write(f"{key}={value}\n")
 
 # -------------------
 # Hauptlogik
@@ -279,55 +255,57 @@ def main():
     FEED_URL = "https://www.bundesfinanzhof.de/de/precedent.rss"
     feed = feedparser.parse(FEED_URL)
 
-    # CHANGE: Testmodus aus GitHub Actions
+    # Testmodus aus GitHub Actions
     test_mode = os.getenv("TEST_MODE", "false").lower() == "true"
     if test_mode:
         print("🧪 Testmodus aktiv: nur 1 Entscheidung wird verarbeitet")
         feed.entries = feed.entries[:1]
 
+    tracker = UsageTracker()
     summaries = []
-    quota_exceeded = False
+    fatal = None  # FatalAPIError, sobald die API nicht mehr nutzbar ist
+
     for entry in feed.entries:
-        # NEU: robusten PDF-Link über Hilfsfunktion holen
+        item = {
+            "title": entry.title,
+            "published": entry.get("published", ""),
+            "link": entry.link,
+            "leitsatz": "",
+            "summary": "",
+        }
+        summaries.append(item)
+
         try:
             pdf_link = build_bfh_pdf_url(entry.link)
+            pdf_path = download_pdf(pdf_link)
+            raw_text = extract_text_from_pdf(pdf_path)
         except Exception as e:
-            print(f"⚠️ Kein PDF-Link für {entry.link} gefunden: {e}, überspringe...")
+            print(f"⚠️ Volltext für {entry.link} nicht verfügbar: {e}, überspringe...")
+            item["summary"] = "⚠️ Der Volltext konnte nicht geladen werden, siehe Link."
             continue
 
-        pdf_path = download_pdf(pdf_link)
-        raw_text = extract_text_from_pdf(pdf_path)
+        item["title"] = title_with_case_number(entry.title, raw_text)
+        item["leitsatz"] = extract_leitsatz(raw_text)
 
-        leitsatz = extract_leitsatz(raw_text)
-        if quota_exceeded:
-            summary = QUOTA_MESSAGE
-        else:
+        if fatal is None:
             try:
-                summary = summarize_text(raw_text)
-            except QuotaExceededError as e:
-                print(f"❌ OpenAI-Guthaben aufgebraucht, keine weiteren API-Aufrufe: {e}")
-                quota_exceeded = True
-                summary = QUOTA_MESSAGE
-
-        summaries.append({
-            "title": entry.title,
-            "published": entry.published,
-            "link": entry.link,
-            "leitsatz": leitsatz,
-            "summary": summary,
-        })
+                item["summary"] = summarize_text(raw_text, tracker)
+            except FatalAPIError as e:
+                print(f"❌ {e.reason}, keine weiteren API-Aufrufe: {e}")
+                fatal = e
+        if fatal is not None:
+            item["summary"] = fatal.notice
 
     os.makedirs("weekly_reports", exist_ok=True)
-    filename = f"weekly_reports/BFH_Entscheidungen_KW{datetime.now().isocalendar()[1]}_{datetime.now().year}.pdf"
-    warning = QUOTA_MESSAGE if quota_exceeded else None
-    create_weekly_pdf(summaries, filename, DEFAULT_MODEL, warning=warning)
+    year, week, _ = datetime.now(ZoneInfo("Europe/Berlin")).isocalendar()
+    filename = f"weekly_reports/BFH_Entscheidungen_KW{week}_{year}.pdf"
 
-    if quota_exceeded:
+    warning = fatal.notice if fatal is not None else None
+    create_weekly_pdf(summaries, filename, tracker.models, cost=tracker.cost(), warning=warning)
+
+    if fatal is not None:
         # Hinweis für den Mail-Schritt im Workflow
-        github_output = os.getenv("GITHUB_OUTPUT")
-        if github_output:
-            with open(github_output, "a") as f:
-                f.write("warning=OpenAI-Guthaben aufgebraucht, Zusammenfassungen fehlen\n")
+        write_github_output("warning", f"{fatal.reason}, Zusammenfassungen fehlen")
         sys.exit(1)
 
 if __name__ == "__main__":

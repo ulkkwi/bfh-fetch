@@ -38,7 +38,7 @@ def main():
 
     print(f"📁 Output-Datei soll sein: {filename}")
     try:
-        create_weekly_pdf(summaries, filename, model="gpt-5-nano")
+        create_weekly_pdf(summaries, filename, ["gpt-5-nano"], cost=0.0123)
     except Exception as e:
         print("❌ Exception beim Aufruf von create_weekly_pdf():")
         traceback.print_exc()

@@ -14,19 +14,13 @@ jobs:
   run:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
-
-      - name: Setup locale
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y locales
-          sudo locale-gen de_DE.UTF-8
-          sudo update-locale LANG=de_DE.UTF-8
+          cache: pip
 
       - name: Install dependencies
         run: pip install -r requirements.txt

@@ -1,8 +1,8 @@
-pyphen
-tiktoken
-feedparser
-requests
-beautifulsoup4
-openai
-reportlab
-PyPDF2
+beautifulsoup4==4.15.0
+feedparser==6.0.14
+openai==3.23.0
+pypdf==6.19.0
+pyphen==0.18.1
+reportlab==5.0.1
+requests==2.34.2
+tzdata==2026.4
