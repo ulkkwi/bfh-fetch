@@ -1,8 +1,9 @@
 # generate_weekly_report.py
 import os
 import re
-from datetime import datetime, date
+from datetime import datetime
 from email.utils import parsedate_to_datetime
+from zoneinfo import ZoneInfo
 from reportlab.lib.pagesizes import A4
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak, Table, TableStyle
 from reportlab.lib import colors
@@ -32,6 +33,8 @@ if not font_registered:
     except Exception:
         print("ℹ️ DejaVuSans nicht gefunden; Fallback auf Helvetica wird verwendet.")
 # --- Ende Font-Block ---
+
+BERLIN = ZoneInfo("Europe/Berlin")
 
 # Hyphenator
 dic = pyphen.Pyphen(lang="de_DE")
@@ -66,7 +69,21 @@ def hyphenate_text(text: str, min_len: int = 12) -> str:
                 out.append(hyphenate_word(token))
     return "".join(out)
 
-def create_weekly_pdf(summaries, filename, model):
+def format_published(pub: str) -> str:
+    """RSS-Datum in deutsche Zeit umrechnen, unabhängig von der Zeitzone des Servers."""
+    try:
+        dt = parsedate_to_datetime(pub)
+    except Exception:
+        return pub
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(BERLIN)
+    return dt.strftime("%d.%m.%Y, %H:%M Uhr")
+
+def format_usd(amount: float) -> str:
+    return f"{amount:.4f}".replace(".", ",") + " USD"
+
+def create_weekly_pdf(summaries, filename, models, cost=None, warning=None):
+    """models: Liste der tatsächlich verwendeten Modelle, cost: API-Kosten in USD (None = unbekannt)"""
     doc = SimpleDocTemplate(filename, pagesize=A4,
                             rightMargin=2*cm, leftMargin=2*cm,
                             topMargin=2*cm, bottomMargin=2*cm)
@@ -85,8 +102,8 @@ def create_weekly_pdf(summaries, filename, model):
     )
 
     story = []
-    today = date.today()
-    year, week, _ = datetime.now().isocalendar()
+    now = datetime.now(BERLIN)
+    year, week, _ = now.isocalendar()
 
     # ---- Titelseite ----
     story.append(Spacer(1, 5 * cm))
@@ -97,7 +114,7 @@ def create_weekly_pdf(summaries, filename, model):
 
     data = [
         ["Kalenderwoche:", f"{week} / {year}"],
-        ["Erstellt am:", today.strftime("%d.%m.%Y")],
+        ["Erstellt am:", now.strftime("%d.%m.%Y")],
     ]
     table = Table(data, colWidths=[5 * cm, 10 * cm])
     table.setStyle(TableStyle([
@@ -106,6 +123,18 @@ def create_weekly_pdf(summaries, filename, model):
         ("ALIGN", (0, 0), (-1, -1), "LEFT"),
     ]))
     story.append(table)
+    if warning:
+        warning_style = ParagraphStyle(
+            "Warning",
+            parent=styles["Normal"],
+            fontName=font_to_use,
+            textColor=colors.red,
+            borderColor=colors.red,
+            borderWidth=1,
+            borderPadding=8,
+        )
+        story.append(Spacer(1, 2 * cm))
+        story.append(Paragraph(f"Hinweis: {warning}", warning_style))
     story.append(PageBreak())
 
     # ---- Inhalt ----
@@ -115,18 +144,9 @@ def create_weekly_pdf(summaries, filename, model):
     for entry in summaries:
         story.append(Paragraph(f"<b>{entry.get('title','Unbekannte Entscheidung')}</b>", styles["Heading2"]))
 
-        pub = entry.get("published", "")
-        pub_date_str = pub
-        try:
-            dt = parsedate_to_datetime(pub)
-            try:
-                dt = dt.astimezone()
-            except Exception:
-                pass
-            pub_date_str = dt.strftime("%d.%m.%Y, %H:%M Uhr")
-        except Exception:
-            pub_date_str = pub
-
+        if entry.get("decision"):
+            story.append(Paragraph(entry["decision"], styles["Normal"]))
+        pub_date_str = format_published(entry.get("published", ""))
         story.append(Paragraph(f"Veröffentlicht: {pub_date_str}", styles["Normal"]))
         story.append(Paragraph(f"Link: <a href='{entry.get('link','')}'>{entry.get('link','')}</a>", styles["Normal"]))
         story.append(Spacer(1, 10))
@@ -147,7 +167,18 @@ def create_weekly_pdf(summaries, filename, model):
     story.append(PageBreak())
     story.append(Paragraph("<b>Technische Hinweise</b>", styles["Heading1"]))
     story.append(Spacer(1, 10))
-    story.append(Paragraph(f"Die Zusammenfassungen wurden automatisch mit dem Modell <b>{model}</b> erstellt.", styles["Normal"]))
+    if isinstance(models, str):
+        models = [models]
+    if models:
+        label = "dem Modell" if len(models) == 1 else "den Modellen"
+        story.append(Paragraph(
+            f"Die Zusammenfassungen wurden automatisch mit {label} <b>{', '.join(models)}</b> erstellt.",
+            styles["Normal"]))
+    else:
+        story.append(Paragraph("Es wurden keine Zusammenfassungen mit einem KI-Modell erstellt.", styles["Normal"]))
+    if cost is not None and models:
+        story.append(Spacer(1, 10))
+        story.append(Paragraph(f"API-Kosten für diesen Bericht: ca. {format_usd(cost)}", styles["Normal"]))
     story.append(Spacer(1, 10))
     story.append(Paragraph("Quelle: RSS-Feed des Bundesfinanzhofs.", styles["Normal"]))
 

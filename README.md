@@ -13,3 +13,15 @@ Das Wochen-PDF wird **automatisch per E-Mail** versendet (SMTP).
 - Wöchentliches PDF mit Titelseite (formal), Aktenzeichen vor jedem Titel
 - „Technische Hinweise“: verwendetes Modell + geschätzte API-Kosten (pro Woche)
 - **Mailversand** des Wochen-PDFs aus GitHub Actions
+
+## ⚠️ Fehlerfälle
+- **OpenAI-Guthaben aufgebraucht oder API-Schlüssel ungültig:** Es werden keine weiteren API-Aufrufe gemacht. Der Bericht wird mit den Leitsätzen und einem deutlichen Hinweis trotzdem verschickt, der Betreff der Mail enthält „ACHTUNG“ und der Workflow wird rot.
+- **Volltext einer Entscheidung nicht abrufbar:** Die Entscheidung erscheint mit Link und Hinweis im Bericht, die übrigen werden normal verarbeitet.
+
+## 🧪 Tests
+```
+pip install -r requirements.txt
+python tests/test_fetch_bfh.py
+python tests/test_generate_weekly_report.py
+```
+Die Tests laufen ohne Netzwerk und ohne API-Schlüssel und werden bei jedem Push in GitHub Actions ausgeführt.

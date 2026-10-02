@@ -14,42 +14,42 @@ jobs:
   run:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
-
-      - name: Setup locale
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y locales
-          sudo locale-gen de_DE.UTF-8
-          sudo update-locale LANG=de_DE.UTF-8
+          cache: pip
 
       - name: Install dependencies
         run: pip install -r requirements.txt
 
       - name: Run fetch script
+        id: fetch
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          MODEL: ${{ secrets.MODEL || 'gpt-5-nano' }}
+          MODEL: ${{ secrets.MODEL || 'gpt-5-mini' }}
           TEST_MODE: ${{ github.event.inputs.test_mode }}
         run: python fetch_bfh.py
 
+      # Läuft auch, wenn das Skript wegen fehlenden API-Guthabens rot endet,
+      # damit der Bericht mit den Leitsätzen trotzdem ankommt.
       - name: Send weekly PDF via Email
+        if: always() && hashFiles('weekly_reports/BFH_Entscheidungen_*.pdf') != ''
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: smtp.gmail.com
           server_port: 465
           username: ${{ secrets.EMAIL_USER }}
           password: ${{ secrets.EMAIL_PASS }}
-          subject: "BFH Wochenbericht"
+          subject: "BFH Wochenbericht${{ steps.fetch.outputs.warning && format(' (ACHTUNG: {0})', steps.fetch.outputs.warning) || '' }}"
           to: ${{ secrets.EMAIL_TO }}
           from: ${{ secrets.EMAIL_USER }}
           body: |
             Guten Tag,
+
+            ${{ steps.fetch.outputs.warning && format('ACHTUNG: {0}. Der Bericht enthält nur die Leitsätze.', steps.fetch.outputs.warning) || '' }}
 
             anbei der aktuelle Wochenbericht mit den neuesten Entscheidungen
             des Bundesfinanzhofs (automatisch erstellt).

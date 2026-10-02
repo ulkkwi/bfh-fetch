@@ -1,0 +1,4 @@
+__pycache__/
+downloads/
+weekly_reports/
+tests/test_weekly_report_*.pdf
