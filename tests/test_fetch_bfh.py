@@ -109,6 +109,10 @@ def test_parse_html():
     assert "Die Beschwerde ist begründet." in d["text"]
     assert "zurück zur Übersicht" not in d["text"]
     assert "§ 198 Abs 2 BewG,\n§ 76 Abs 1 S 1 FGO" in d["text"]  # Leerraum bereinigt
+    # Aktenzeichen mit Klammerzusatz (Hotel-Urteile vom 21.05.2026)
+    soup = load_fixture()
+    soup.select_one("div.m-article__header h1").string = "Urteil vom 21. Mai 2026, V R 8/26 (XI R 11/23, XI R 34/20)"
+    assert fb.parse_decision_html(soup)["decision"] == "Urteil vom 21. Mai 2026, BFH II. Senat"
     # unbekannter Seitenaufbau -> None, dann wird das PDF verwendet
     assert fb.parse_decision_html(BeautifulSoup("<html><body><p>x</p></body></html>", "html.parser")) is None
     assert fb.find_pdf_url(load_fixture(), "https://www.bundesfinanzhof.de/de/x/").endswith("STRE202610181?type=1646225765")

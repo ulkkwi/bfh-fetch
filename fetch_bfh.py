@@ -169,9 +169,9 @@ def parse_decision_html(soup: BeautifulSoup) -> dict | None:
     senat = soup.select_one("p.spruchkoerper")
 
     # "Urteil vom 15. Juli 2026, I R 20/23" -> "Urteil vom 15. Juli 2026, BFH I. Senat"
-    decision = heading
-    if "," in heading and extract_case_number(heading.rsplit(",", 1)[1]):
-        decision = heading.rsplit(",", 1)[0]
+    # Alles ab dem Aktenzeichen abschneiden, auch Zusätze wie "(XI R 11/23, XI R 34/20)"
+    m = re.search(r",\s*" + CASE_NUMBER_RE.pattern, heading)
+    decision = heading[:m.start()] if m else heading
     if senat:
         decision = f"{decision}, {clean_text(senat.get_text(' ', strip=True))}" if decision else clean_text(senat.get_text(" ", strip=True))
 
