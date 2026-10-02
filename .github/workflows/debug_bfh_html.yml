@@ -17,7 +17,8 @@ jobs:
       - name: Parser gegen echte Seiten testen (ohne OpenAI)
         shell: python
         run: |
-          import os, feedparser, requests
+          import os, sys, feedparser, requests
+          sys.path.insert(0, os.getcwd())
           from bs4 import BeautifulSoup
           import fetch_bfh as fb
           from generate_weekly_report import create_weekly_pdf
