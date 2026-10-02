@@ -5,7 +5,11 @@ import sys
 import tempfile
 import types
 
-import httpx
+try:
+    import httpx2 as httpx  # openai ab 3.x
+except ImportError:
+    import httpx
+from bs4 import BeautifulSoup
 from openai import AuthenticationError, RateLimitError
 from pypdf import PdfReader
 
@@ -16,8 +20,13 @@ if root not in sys.path:
 import fetch_bfh as fb
 from generate_weekly_report import format_published
 
+FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "bfh_detail.html")
 REQUEST = httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
 PDF_TEXT = "BUNDESFINANZHOF Urteil vom 1.7.2026, VI R 4/23 Leitsatz: Ein Satz. Tenor: Die Revision wird zurückgewiesen."
+
+def load_fixture():
+    with open(FIXTURE, encoding="utf-8") as f:
+        return BeautifulSoup(f.read(), "html.parser")
 
 def quota_error(**kwargs):
     raise RateLimitError("no credits", response=httpx.Response(429, request=REQUEST),
@@ -46,17 +55,18 @@ class FakeClient:
 def run_main(handler, workdir, fail_download_for=()):
     """Startet main() mit drei Feed-Einträgen und ersetzt Netzwerk und API durch Stubs."""
     E = types.SimpleNamespace
-    entries = [E(title=f"Einkommensteuer Fall {i}", published="Thu, 01 Oct 2026 10:00:02 +0200",
-                 link=f"https://example.org/{i}", get=lambda k, d="": "Thu, 01 Oct 2026 10:00:02 +0200")
+    published = "Thu, 01 Oct 2026 10:00:01 +0200"
+    entries = [E(title="II B 87/25", link=f"https://example.org/{i}",
+                 get=lambda k, d="": {"published": published,
+                                      "summary": "Nachweis des niedrigeren gemeinen Werts"}.get(k, d))
                for i in range(3)]
     fb.feedparser.parse = lambda url: E(entries=entries)
-    fb.build_bfh_pdf_url = lambda link: link
-    def download(url):
+    parsed = fb.parse_decision_html(load_fixture())
+    def fetch(url):
         if url in fail_download_for:
             raise RuntimeError("404")
-        return "dummy.pdf"
-    fb.download_pdf = download
-    fb.extract_text_from_pdf = lambda path: PDF_TEXT
+        return parsed
+    fb.fetch_decision = fetch
     fake = FakeClient(handler)
     fb._client = fake
 
@@ -85,8 +95,23 @@ def test_helpers():
     assert fb.extract_case_number("XI B 120/24 Beschluss") == "XI B 120/24"
     assert fb.extract_case_number("Keine Nummer 2026") == ""
     assert fb.title_with_case_number("VI R 4/23 – Titel", "IX R 1/22") == "VI R 4/23 – Titel"
-    assert fb.title_with_case_number("Titel", PDF_TEXT) == "VI R 4/23 – Titel"
+    assert fb.title_with_case_number("Titel", PDF_TEXT) == "VI R 4/23: Titel"
     assert fb.extract_leitsatz(PDF_TEXT) == "Ein Satz."
+
+def test_parse_html():
+    d = fb.parse_decision_html(load_fixture())
+    assert d is not None and d["source"] == "html"
+    assert d["decision"] == "Beschluss vom 04. August 2026, BFH II. Senat"
+    assert d["topic"].startswith("Nachweis des niedrigeren gemeinen Werts")
+    assert d["leitsatz"].startswith("Eine pauschale Zurückweisung")
+    assert d["leitsatz"].endswith("--FGO--).")  # geschützte Bindestriche vereinheitlicht
+    assert "Tenor" not in d["leitsatz"]
+    assert "Die Beschwerde ist begründet." in d["text"]
+    assert "zurück zur Übersicht" not in d["text"]
+    assert "§ 198 Abs 2 BewG,\n§ 76 Abs 1 S 1 FGO" in d["text"]  # Leerraum bereinigt
+    # unbekannter Seitenaufbau -> None, dann wird das PDF verwendet
+    assert fb.parse_decision_html(BeautifulSoup("<html><body><p>x</p></body></html>", "html.parser")) is None
+    assert fb.find_pdf_url(load_fixture(), "https://www.bundesfinanzhof.de/de/x/").endswith("STRE202610181?type=1646225765")
     assert fb.model_order("gpt-5-nano") == ["gpt-5-nano", "gpt-5-mini", "gpt-5"]
     assert fb.model_order("gpt-5-mini") == ["gpt-5-mini", "gpt-5"]
     assert fb.model_order("anderes") == ["anderes", "gpt-5-nano", "gpt-5-mini", "gpt-5"]
@@ -95,10 +120,11 @@ def test_normal_run():
     with tempfile.TemporaryDirectory() as d:
         code, calls, output, text = run_main(ok_response, d, fail_download_for=("https://example.org/2",))
     assert code == 0 and calls == 2 and output == ""
-    assert "VI R 4/23 – Einkommensteuer Fall 0" in text
+    assert "II B 87/25: Nachweis des niedrigeren gemeinen Werts" in text
+    assert "Beschluss vom 04. August 2026, BFH II. Senat" in text
     assert "01.10.2026, 10:00 Uhr" in text
     assert "Volltext konnte nicht geladen werden" in text
-    assert "gpt-5-nano" in text and "0,0014 USD" in text
+    assert "gpt-5-mini" in text and "0,0070 USD" in text
 
 def test_quota_exhausted():
     with tempfile.TemporaryDirectory() as d:
@@ -107,7 +133,7 @@ def test_quota_exhausted():
     assert calls == 1, f"nach dem ersten Fehler keine weiteren Aufrufe, waren aber {calls}"
     assert "Guthaben aufgebraucht" in output
     assert "Guthaben für die OpenAI-API ist aufgebraucht" in text
-    assert "Ein Satz." in text  # Leitsätze bleiben erhalten
+    assert "Eine pauschale Zurückweisung" in text  # Leitsätze bleiben erhalten
 
 def test_invalid_key():
     with tempfile.TemporaryDirectory() as d:
@@ -117,7 +143,7 @@ def test_invalid_key():
     assert "API-Schlüssel ist ungültig" in text
 
 def main():
-    tests = [test_helpers, test_normal_run, test_quota_exhausted, test_invalid_key]
+    tests = [test_helpers, test_parse_html, test_normal_run, test_quota_exhausted, test_invalid_key]
     for t in tests:
         t()
         print(f"✅ {t.__name__}")

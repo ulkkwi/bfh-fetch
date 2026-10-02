@@ -144,6 +144,8 @@ def create_weekly_pdf(summaries, filename, models, cost=None, warning=None):
     for entry in summaries:
         story.append(Paragraph(f"<b>{entry.get('title','Unbekannte Entscheidung')}</b>", styles["Heading2"]))
 
+        if entry.get("decision"):
+            story.append(Paragraph(entry["decision"], styles["Normal"]))
         pub_date_str = format_published(entry.get("published", ""))
         story.append(Paragraph(f"Veröffentlicht: {pub_date_str}", styles["Normal"]))
         story.append(Paragraph(f"Link: <a href='{entry.get('link','')}'>{entry.get('link','')}</a>", styles["Normal"]))

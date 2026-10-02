@@ -3,45 +3,41 @@ name: Debug BFH HTML (temporaer)
 on:
   push:
     branches: [claude/busy-mccarthy-4bge9f]
-    paths: [.github/workflows/debug_bfh_html.yml]
+    paths: [.github/workflows/debug_bfh_html.yml, fetch_bfh.py]
 
 jobs:
   inspect:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
-      - run: pip install requests beautifulsoup4 feedparser
-      - name: Feed und Detailseite untersuchen
+      - run: pip install -r requirements.txt
+      - name: Parser gegen echte Seiten testen (ohne OpenAI)
         shell: python
         run: |
-          import feedparser, requests
+          import os, feedparser, requests
           from bs4 import BeautifulSoup
-          H = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"}
-          feed = feedparser.parse(requests.get("https://www.bundesfinanzhof.de/de/precedent.rss", headers=H, timeout=30).content)
-          print("FEED ENTRIES:", len(feed.entries))
-          for e in feed.entries[:15]:
-              print("ENTRY:", repr(e.title), e.link, e.get("published"))
-          if feed.entries:
-              print("ENTRY KEYS:", list(feed.entries[0].keys()))
-              print("SUMMARY0:", feed.entries[0].get("summary", "")[:600])
-          for e in feed.entries[:2]:
-              html = requests.get(e.link, headers=H, timeout=30).text
-              open("page.html", "w").write(html)
-              soup = BeautifulSoup(html, "html.parser")
-              main = soup.find("main") or soup.body
-              print("\n==== PAGE", e.link, "len", len(html))
-              for el in main.find_all(True):
-                  if el.name in ("script", "style", "svg", "path"):
-                      continue
-                  own = "".join(t for t in el.find_all(string=True, recursive=False)).strip()
-                  if el.name in ("h1","h2","h3","h4","h5","h6","section","article","dl","dt","dd","table","tr","td","th") or el.get("class") or el.get("id"):
-                      print(f"<{el.name} id={el.get('id')} class={el.get('class')}> {own[:120]!r}")
-              print("==== TEXT START")
-              print(main.get_text("\n", strip=True)[:6000])
-              print("==== TEXT END")
+          import fetch_bfh as fb
+          from generate_weekly_report import create_weekly_pdf
+          feed = feedparser.parse(requests.get("https://www.bundesfinanzhof.de/de/precedent.rss", headers=fb.HEADERS, timeout=30).content)
+          items = []
+          for e in feed.entries:
+              d = fb.fetch_decision(e.link)
+              topic = fb.clean_text(BeautifulSoup(e.get("summary", ""), "html.parser").get_text(" ")) or d["topic"]
+              title = fb.title_with_case_number(e.title, d["text"])
+              title = f"{title}: {topic}" if topic and topic not in title else title
+              print(f"\n=== {title}")
+              print(f"source={d['source']} chars={len(d['text'])} decision={d['decision']!r}")
+              print(f"LEITSATZ ({len(d['leitsatz'])}): {d['leitsatz'][:300]!r}")
+              print(f"TEXT END: {d['text'][-200:]!r}")
+              items.append({"title": title, "published": e.get("published", ""), "link": e.link,
+                            "decision": d["decision"], "leitsatz": d["leitsatz"],
+                            "summary": f"(Testlauf ohne KI, Volltext {len(d['text'])} Zeichen aus {d['source']})"})
+          os.makedirs("out", exist_ok=True)
+          create_weekly_pdf(items, "out/Testbericht_ohne_KI.pdf", [], cost=None)
       - uses: actions/upload-artifact@v4
         with:
-          name: page-html
-          path: page.html
+          name: testbericht
+          path: out/Testbericht_ohne_KI.pdf

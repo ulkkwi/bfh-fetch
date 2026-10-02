@@ -29,7 +29,7 @@ jobs:
         id: fetch
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          MODEL: ${{ secrets.MODEL || 'gpt-5-nano' }}
+          MODEL: ${{ secrets.MODEL || 'gpt-5-mini' }}
           TEST_MODE: ${{ github.event.inputs.test_mode }}
         run: python fetch_bfh.py
 

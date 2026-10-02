@@ -16,7 +16,7 @@ from generate_weekly_report import create_weekly_pdf
 # -------------------
 # Konfiguration
 # -------------------
-DEFAULT_MODEL = os.getenv("MODEL", "gpt-5-nano")  # Startmodell aus Umgebungsvariable oder Default
+DEFAULT_MODEL = os.getenv("MODEL") or "gpt-5-mini"  # Startmodell aus Umgebungsvariable oder Default
 
 # Reihenfolge der Ausweichmodelle, falls ein Modell keine Antwort liefert
 FALLBACK_MODELS = ["gpt-5-nano", "gpt-5-mini", "gpt-5"]
@@ -119,38 +119,80 @@ def extract_case_number(text: str) -> str:
     match = CASE_NUMBER_RE.search(text)
     return match.group(0) if match else ""
 
-def title_with_case_number(title: str, pdf_text: str) -> str:
-    """Stellt das Aktenzeichen aus dem PDF vor den Titel, falls es dort noch fehlt."""
+def title_with_case_number(title: str, source_text: str) -> str:
+    """Stellt das Aktenzeichen aus dem Volltext vor den Titel, falls es dort noch fehlt."""
     if extract_case_number(title):
         return title
-    case_number = extract_case_number(pdf_text[:3000])
-    return f"{case_number} – {title}" if case_number else title
+    case_number = extract_case_number(source_text[:3000])
+    return f"{case_number}: {title}" if case_number else title
 
-def build_bfh_pdf_url(detail_url: str) -> str:
+def clean_text(text: str) -> str:
+    """Mehrfache Leerzeichen und Leerzeilen entfernen, geschützte Bindestriche vereinheitlichen."""
+    text = text.replace("\u2011", "-").replace("\xa0", " ")
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r" *\n[\n ]*", "\n", text)
+    return text.strip()
+
+def section_text(body, names: tuple[str, ...]) -> str:
+    """Text eines Abschnitts (z. B. 'Leitsätze') bis zur nächsten h2-Überschrift."""
+    for h2 in body.find_all("h2"):
+        if h2.get_text(strip=True) not in names:
+            continue
+        parts = []
+        for sib in h2.find_next_siblings():
+            if sib.name == "h2":
+                break
+            parts.append(sib.get_text("\n", strip=True))
+        if not parts:  # falls der Inhalt anders verschachtelt ist
+            block = h2.find_next("div", class_="m-decisions")
+            if block:
+                parts.append(block.get_text("\n", strip=True))
+        return clean_text("\n".join(parts))
+    return ""
+
+def parse_decision_html(soup: BeautifulSoup) -> dict | None:
     """
-    Ermittelt den echten PDF-Link direkt von der normalen Detailseite.
+    Liest eine Entscheidung aus der BFH-Detailseite.
+    Gibt None zurück, wenn die Seite nicht den erwarteten Aufbau hat.
+    """
+    body = soup.select_one("article.m-article--full div.m-article__body")
+    if body is None:
+        return None
+    body_text = clean_text(body.get_text("\n", strip=True))
+    if len(body_text) < 500:
+        return None
+
+    header = soup.select_one("div.m-article__header h1")
+    heading = clean_text(header.get_text(" ", strip=True)) if header else ""
+    intro = soup.select_one("div.m-article__intro")
+    intro_text = clean_text(intro.get_text("\n", strip=True)) if intro else ""
+    senat = soup.select_one("p.spruchkoerper")
+
+    # "Urteil vom 15. Juli 2026, I R 20/23" -> "Urteil vom 15. Juli 2026, BFH I. Senat"
+    decision = heading
+    if "," in heading and extract_case_number(heading.rsplit(",", 1)[1]):
+        decision = heading.rsplit(",", 1)[0]
+    if senat:
+        decision = f"{decision}, {clean_text(senat.get_text(' ', strip=True))}" if decision else clean_text(senat.get_text(" ", strip=True))
+
+    return {
+        "text": "\n".join(t for t in (heading, intro_text, body_text) if t),
+        "leitsatz": section_text(body, ("Leitsätze", "Leitsatz")),
+        "decision": decision,
+        "topic": intro_text,
+        "source": "html",
+    }
+
+def find_pdf_url(soup: BeautifulSoup, detail_url: str) -> str:
+    """
+    Ermittelt den PDF-Link auf der Detailseite.
     Sucht <a> mit /detail/pdf/... und behält den ?type=... Parameter bei.
     """
-    # 1) Original-Detailseite laden (kein /pdf/ anhängen!)
-    resp = requests.get(detail_url, headers=HEADERS, timeout=20)
-    resp.raise_for_status()
-    soup = BeautifulSoup(resp.text, "html.parser")
-
-    # 2) Kandidaten sammeln: alle <a href> mit "/detail/pdf/"
     candidates = [a for a in soup.find_all("a", href=True) if "/detail/pdf/" in a["href"]]
-
-    if not candidates:
-        # Optionaler Fallback: Seite /pdf/ probieren, falls BFH-Seitenstruktur abweicht
-        pdf_overview_url = detail_url.rstrip("/") + "/pdf/"
-        resp2 = requests.get(pdf_overview_url, headers=HEADERS, timeout=20)
-        if resp2.ok:
-            soup2 = BeautifulSoup(resp2.text, "html.parser")
-            candidates = [a for a in soup2.find_all("a", href=True) if "/detail/pdf/" in a["href"]]
-
     if not candidates:
         raise RuntimeError(f"Kein PDF-Link auf {detail_url} gefunden")
 
-    # 3) Bester Treffer: bevorzugt Download-Link mit Klasse/Titel/Text „PDF“ und vorhandenen ?type=
+    # Bester Treffer: bevorzugt Download-Link mit Klasse/Titel/Text „PDF“ und vorhandenen ?type=
     def score(a):
         s = 0
         cls = " ".join(a.get("class", []))
@@ -171,6 +213,29 @@ def build_bfh_pdf_url(detail_url: str) -> str:
     pdf_url = urljoin(detail_url, best["href"])  # relative -> absolute URL
     print(f"🔗 Gefundener PDF-Link: {pdf_url}")
     return pdf_url
+
+def fetch_decision(detail_url: str) -> dict:
+    """
+    Holt den Volltext von der Detailseite (HTML).
+    Hat die Seite nicht den erwarteten Aufbau, wird auf das PDF ausgewichen.
+    """
+    resp = requests.get(detail_url, headers=HEADERS, timeout=30)
+    resp.raise_for_status()
+    soup = BeautifulSoup(resp.text, "html.parser")
+
+    decision = parse_decision_html(soup)
+    if decision is not None:
+        return decision
+
+    print(f"ℹ️ Seitenaufbau unbekannt, lade PDF für {detail_url}")
+    text = extract_text_from_pdf(download_pdf(find_pdf_url(soup, detail_url)))
+    return {
+        "text": text,
+        "leitsatz": extract_leitsatz(text),
+        "decision": "",
+        "topic": "",
+        "source": "pdf",
+    }
 
 # BFH PDFs sauber benennen (ignoriere ?type=...)
 def download_pdf(url: str, folder="downloads"):
@@ -266,30 +331,34 @@ def main():
     fatal = None  # FatalAPIError, sobald die API nicht mehr nutzbar ist
 
     for entry in feed.entries:
+        # Der Feed-Titel ist das Aktenzeichen, die Beschreibung das Thema
+        topic = clean_text(BeautifulSoup(entry.get("summary", ""), "html.parser").get_text(" "))
         item = {
             "title": entry.title,
             "published": entry.get("published", ""),
             "link": entry.link,
+            "decision": "",
             "leitsatz": "",
             "summary": "",
         }
         summaries.append(item)
 
         try:
-            pdf_link = build_bfh_pdf_url(entry.link)
-            pdf_path = download_pdf(pdf_link)
-            raw_text = extract_text_from_pdf(pdf_path)
+            decision = fetch_decision(entry.link)
         except Exception as e:
             print(f"⚠️ Volltext für {entry.link} nicht verfügbar: {e}, überspringe...")
             item["summary"] = "⚠️ Der Volltext konnte nicht geladen werden, siehe Link."
             continue
 
-        item["title"] = title_with_case_number(entry.title, raw_text)
-        item["leitsatz"] = extract_leitsatz(raw_text)
+        title = title_with_case_number(entry.title, decision["text"])
+        topic = topic or decision["topic"]
+        item["title"] = f"{title}: {topic}" if topic and topic not in title else title
+        item["decision"] = decision["decision"]
+        item["leitsatz"] = decision["leitsatz"]
 
         if fatal is None:
             try:
-                item["summary"] = summarize_text(raw_text, tracker)
+                item["summary"] = summarize_text(decision["text"], tracker)
             except FatalAPIError as e:
                 print(f"❌ {e.reason}, keine weiteren API-Aufrufe: {e}")
                 fatal = e
