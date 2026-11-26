@@ -1,0 +1,24 @@
+name: Keepalive
+
+# GitHub deaktiviert geplante Workflows nach 60 Tagen ohne Repo-Aktivität.
+# Dieser Workflow aktiviert sie regelmäßig neu und setzt damit den Zähler zurück.
+
+on:
+  schedule:
+    - cron: "0 6 1 * *"  # Am 1. jedes Monats, 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  actions: write
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Re-enable scheduled workflows
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh workflow enable fetch_bfh.yml
+          gh workflow enable keepalive.yml
