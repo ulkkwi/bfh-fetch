@@ -10,8 +10,8 @@ Das Wochen-PDF wird **automatisch per E-Mail** versendet (SMTP).
 - Abruf der neuesten BFH-Entscheidungen via RSS
 - Textextraktion von der Detailseite des BFH (Leitsätze und Volltext)
 - Narrative Zusammenfassung per OpenAI-API (ein Absatz, höchstens 5 Sätze)
-  - Standardmodell `gpt-5-mini`, wählbar über das Secret `MODEL`
-  - Liefert das Modell keine Antwort, wird `gpt-5` versucht
+  - Standardmodell `gpt-5.4-nano`, wählbar über das Secret `MODEL`
+  - Liefert das Modell keine Antwort, werden nacheinander `gpt-5.4-mini` und `gpt-5.4` versucht
 - Wöchentliches PDF mit Titelseite (formal), je Entscheidung Aktenzeichen, Thema, Art, Datum und Senat
 - „Technische Hinweise“: tatsächlich verwendete Modelle + angefallene API-Kosten
 - **Mailversand** des Wochen-PDFs aus GitHub Actions

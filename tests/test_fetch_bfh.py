@@ -116,9 +116,9 @@ def test_parse_html():
     # unbekannter Seitenaufbau -> None, dann wird das PDF verwendet
     assert fb.parse_decision_html(BeautifulSoup("<html><body><p>x</p></body></html>", "html.parser")) is None
     assert fb.find_pdf_url(load_fixture(), "https://www.bundesfinanzhof.de/de/x/").endswith("STRE202610181?type=1646225765")
-    assert fb.model_order("gpt-5-nano") == ["gpt-5-nano", "gpt-5-mini", "gpt-5"]
-    assert fb.model_order("gpt-5-mini") == ["gpt-5-mini", "gpt-5"]
-    assert fb.model_order("anderes") == ["anderes", "gpt-5-nano", "gpt-5-mini", "gpt-5"]
+    assert fb.model_order("gpt-5.4-nano") == ["gpt-5.4-nano", "gpt-5.4-mini", "gpt-5.4"]
+    assert fb.model_order("gpt-5.4-mini") == ["gpt-5.4-mini", "gpt-5.4"]
+    assert fb.model_order("anderes") == ["anderes", "gpt-5.4-nano", "gpt-5.4-mini", "gpt-5.4"]
 
 def test_normal_run():
     with tempfile.TemporaryDirectory() as d:
@@ -128,7 +128,7 @@ def test_normal_run():
     assert "Beschluss vom 04. August 2026, BFH II. Senat" in text
     assert "01.10.2026, 10:00 Uhr" in text
     assert "Volltext konnte nicht geladen werden" in text
-    assert "gpt-5-mini" in text and "0,0070 USD" in text
+    assert "gpt-5.4-nano" in text and "0,0053 USD" in text
 
 def test_quota_exhausted():
     with tempfile.TemporaryDirectory() as d:

@@ -16,16 +16,17 @@ from generate_weekly_report import create_weekly_pdf
 # -------------------
 # Konfiguration
 # -------------------
-DEFAULT_MODEL = os.getenv("MODEL") or "gpt-5-mini"  # Startmodell aus Umgebungsvariable oder Default
+DEFAULT_MODEL = os.getenv("MODEL") or "gpt-5.4-nano"  # Startmodell aus Umgebungsvariable oder Default
 
 # Reihenfolge der Ausweichmodelle, falls ein Modell keine Antwort liefert
-FALLBACK_MODELS = ["gpt-5-nano", "gpt-5-mini", "gpt-5"]
+FALLBACK_MODELS = ["gpt-5.4-nano", "gpt-5.4-mini", "gpt-5.4"]
 
-# Preise pro 1M Tokens (USD) – Stand 2025
+# Preise pro 1M Tokens (USD) – Stand November 2026
+# (gpt-5, gpt-5-mini und gpt-5-nano schaltet OpenAI am 11.12.2026 ab)
 PRICES = {
-    "gpt-5-nano": {"input": 0.05, "output": 0.40},
-    "gpt-5-mini": {"input": 0.25, "output": 2.00},
-    "gpt-5": {"input": 1.25, "output": 10.00},
+    "gpt-5.4-nano": {"input": 0.20, "output": 1.25},
+    "gpt-5.4-mini": {"input": 0.75, "output": 4.50},
+    "gpt-5.4": {"input": 2.50, "output": 15.00},
 }
 
 # Obergrenze für den Volltext pro Entscheidung (ca. 75.000 Tokens).
